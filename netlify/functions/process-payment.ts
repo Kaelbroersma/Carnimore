@@ -1,7 +1,6 @@
 import { Handler } from '@netlify/functions';
-import https from 'node:https';
-import tls from 'node:tls';
-import { promisify } from 'node:util';
+import * as https from 'https';
+import * as tls from 'tls';
 import { createClient } from '@supabase/supabase-js';
 
 // Environment variables
@@ -157,7 +156,8 @@ export const handler: Handler = async (event) => {
       ExpYear: expiryYear,
       CVV2Type: '1',
       CVV2: cvv,
-      'Postback.URL': `carnimore.netlify.app/.netlify/functions/payment-postback`,
+      OrderID: orderId,
+      'Postback.URL': `${process.env.URL}/.netlify/functions/payment-postback`,
       'Postback.OrderID': orderId,
       'Postback.Total': parseFloat(amount).toFixed(2),
       'Postback.RestrictKey': EPN_RESTRICT_KEY
@@ -179,19 +179,11 @@ export const handler: Handler = async (event) => {
           'User-Agent': 'Carnimore/1.0',
           'X-EPN-Account': EPN_ACCOUNT
         },
-        // Force TLS 1.2
-        minVersion: tls.constants.TLSv1_2_VERSION,
-        maxVersion: tls.constants.TLSv1_2_VERSION,
-        // Secure cipher suites
-        ciphers: [
-          'ECDHE-RSA-AES256-GCM-SHA384',
-          'ECDHE-RSA-AES128-GCM-SHA256'
-        ].join(':'),
-        // Additional security options
-        secureOptions: {
-          rejectUnauthorized: true,
-          honorCipherOrder: true
-        }
+        // TLS Options
+        minVersion: 'TLSv1.2',
+        maxVersion: 'TLSv1.2',
+        rejectUnauthorized: true,
+        ciphers: 'ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256'
       });
 
       request.on('error', (error) => {
