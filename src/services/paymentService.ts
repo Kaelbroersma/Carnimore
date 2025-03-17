@@ -2,8 +2,36 @@ import type { Result } from '../types/database';
 import type { PaymentData, PaymentResult } from '../types/payment';
 import { callNetlifyFunction } from '../lib/supabase';
 
+const formatCardNumber = (cardNumber: string): string => {
+  return cardNumber.replace(/\s+/g, '');
+};
+
+const validateCardNumber = (cardNumber: string): boolean => {
+  const digits = cardNumber.replace(/\D/g, '');
+  return /^\d{15,16}$/.test(digits);
+};
+
+const validateExpiryDate = (month: string, year: string): boolean => {
+  const currentDate = new Date();
+  const currentYear = currentDate.getFullYear() % 100;
+  const currentMonth = currentDate.getMonth() + 1;
+  
+  const expMonth = parseInt(month);
+  const expYear = parseInt(year);
+  
+  if (expMonth < 1 || expMonth > 12) return false;
+  if (expYear < currentYear) return false;
+  if (expYear === currentYear && expMonth < currentMonth) return false;
+  
+  return true;
+};
+
+const validateCVV = (cvv: string): boolean => {
+  return /^\d{3,4}$/.test(cvv);
+};
+
 const formatAmount = (amount: number): string => {
-  return Number(amount).toFixed(2).replace(/^(\d)\./, '0$1.');
+  return amount.toFixed(2);
 };
 
 export const paymentService = {
@@ -31,34 +59,37 @@ export const paymentService = {
 
   async processPayment(data: PaymentData): Promise<Result<PaymentResult>> {
     try {
-      // Validate input data
-      if (!data.cardNumber || !data.expiryMonth || !data.expiryYear || !data.cvv || !data.amount || !data.orderId) {
-        throw new Error('Missing required payment fields');
+      // Validate required fields
+      if (!data.cardNumber || !data.expiryMonth || !data.expiryYear || !data.cvv || !data.amount || !data.orderId || !data.address || !data.zip) {
+        throw new Error('All payment fields are required');
       }
 
-      // Format card number
-      const cardNumber = data.cardNumber.replace(/\s+/g, '');
+      // Format and validate card number
+      const cardNumber = formatCardNumber(data.cardNumber);
+      if (!validateCardNumber(cardNumber)) {
+        throw new Error('Invalid card number');
+      }
       
-      // Validate card number
-      if (!/^\d{15,16}$/.test(cardNumber)) {
-        throw new Error('Invalid card number format');
-      }
-
       // Validate expiry date
-      const month = parseInt(data.expiryMonth);
-      if (month < 1 || month > 12) {
-        throw new Error('Invalid expiry month');
+      if (!validateExpiryDate(data.expiryMonth, data.expiryYear)) {
+        throw new Error('Invalid expiry date');
       }
       
-      const expiryMonth = month.toString().padStart(2, '0');
-
       // Validate CVV
-      if (!/^\d{3,4}$/.test(data.cvv)) {
-        throw new Error('Invalid CVV format');
+      if (!validateCVV(data.cvv)) {
+        throw new Error('Invalid CVV');
       }
-
+      
+      // Format expiry month to ensure 2 digits
+      const expiryMonth = data.expiryMonth.padStart(2, '0');
+      
       // Format amount
-      const formattedAmount = formatAmount(Number(data.amount));
+      const formattedAmount = formatAmount(data.amount);
+      
+      // Validate address and zip
+      if (!data.address.trim() || !data.zip.trim()) {
+        throw new Error('Billing address and ZIP code are required');
+      }
 
       // Send payment request
       const result = await callNetlifyFunction('process-payment', {

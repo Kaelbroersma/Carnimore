@@ -1,11 +1,18 @@
+interface Address {
+  address: string;
+  city: string;
+  state: string;
+  zipCode: string;
+}
+
 export interface PaymentData {
     cardNumber: string;
     expiryMonth: string;
     expiryYear: string;
     cvv: string;
     amount: number;
-    address?: string;
-    zip?: string;
+    shippingAddress: Address;
+    billingAddress?: Address | null;
     orderId: string; // Make orderId required
   }
   

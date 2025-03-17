@@ -1,5 +1,6 @@
 import { Handler } from '@netlify/functions';
 import https from 'node:https';
+import tls from 'node:tls';
 import { createClient } from '@supabase/supabase-js';
 
 // Environment variables
@@ -26,26 +27,56 @@ export const handler: Handler = async (event) => {
     }
 
     const paymentData = JSON.parse(event.body);
-    const { orderId, cardNumber, expiryMonth, expiryYear, cvv, amount, address, zip } = paymentData;
+    const { 
+      orderId, 
+      cardNumber, 
+      expiryMonth, 
+      expiryYear, 
+      cvv, 
+      amount, 
+      shippingAddress,
+      billingAddress,
+      userId 
+    } = paymentData;
+
+    // Format addresses for database
+    const formattedShippingAddress = [
+      shippingAddress.address,
+      shippingAddress.city,
+      shippingAddress.state,
+      shippingAddress.zipCode
+    ].filter(Boolean).join(', ');
+
+    const formattedBillingAddress = billingAddress ? [
+      billingAddress.address,
+      billingAddress.city,
+      billingAddress.state,
+      billingAddress.zipCode
+    ].filter(Boolean).join(', ') : formattedShippingAddress;
 
     // Validate environment variables
     if (!EPN_ACCOUNT || !EPN_RESTRICT_KEY) {
       throw new Error('Missing required environment variables');
     }
 
-    // Create order in Supabase
+    // Create initial order record in Supabase
     const { error: orderError } = await supabase
       .from('orders')
       .insert({
         order_id: orderId,
+        user_id: userId,
         payment_status: 'pending',
         total_amount: amount,
-        shipping_address: address || '',
-        order_date: new Date().toISOString()
+        shipping_address: formattedShippingAddress,
+        billing_address: formattedBillingAddress,
+        order_date: new Date().toISOString(),
+        payment_method: 'credit_card',
+        shipping_method: 'standard',
+        order_status: 'pending'
       });
 
     if (orderError) {
-      throw new Error('Failed to create order');
+      throw new Error(`Failed to create order: ${orderError.message}`);
     }
 
     // Build payment processor request
@@ -56,20 +87,18 @@ export const handler: Handler = async (event) => {
       TranType: 'Sale',
       IndustryType: 'E',
       Total: amount,
-      Address: address || '',
-      Zip: zip || '',
+      Address: billingAddress?.address || shippingAddress.address,
+      Zip: billingAddress?.zipCode || shippingAddress.zipCode,
       CardNo: cardNumber,
       ExpMonth: expiryMonth,
       ExpYear: expiryYear,
       CVV2Type: '1',
       CVV2: cvv,
-      OrderID: orderId,
-      Description: `Order ${orderId}`,
-      PostbackID: orderId,
       'Postback.OrderID': orderId,
       'Postback.Description': `Order ${orderId}`,
       'Postback.Total': amount,
-      'Postback.RestrictKey': EPN_RESTRICT_KEY,      NOMAIL_CARDHOLDER: '1',
+      'Postback.RestrictKey': EPN_RESTRICT_KEY,
+      NOMAIL_CARDHOLDER: '1',
       NOMAIL_MERCHANT: '1'
     });
 
@@ -78,7 +107,21 @@ export const handler: Handler = async (event) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': '*/*'
+        'Accept': '*/*',
+        'User-Agent': 'Carnimore/1.0'
+      },
+      // Force TLS 1.2
+      minVersion: tls.constants.TLSv1_2_VERSION,
+      maxVersion: tls.constants.TLSv1_2_VERSION,
+      // Secure cipher suites
+      ciphers: [
+        'ECDHE-RSA-AES256-GCM-SHA384',
+        'ECDHE-RSA-AES128-GCM-SHA256'
+      ].join(':'),
+      // Additional security options
+      secureOptions: {
+        rejectUnauthorized: true,
+        honorCipherOrder: true
       }
     });
 

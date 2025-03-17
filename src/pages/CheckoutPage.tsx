@@ -138,8 +138,18 @@ const CheckoutPage: React.FC = () => {
         expiryYear: formData.expiryYear,
         cvv: formData.cvv,
         amount: total,
-        address: billingInfo.sameAsShipping ? formData.address : billingInfo.address,
-        zip: billingInfo.sameAsShipping ? formData.zipCode : billingInfo.zipCode,
+        shippingAddress: {
+          address: formData.address,
+          city: formData.city,
+          state: formData.state,
+          zipCode: formData.zipCode
+        },
+        billingAddress: billingInfo.sameAsShipping ? null : {
+          address: billingInfo.address,
+          city: billingInfo.city,
+          state: billingInfo.state,
+          zipCode: billingInfo.zipCode
+        },
         orderId: newOrderId
       });
 
