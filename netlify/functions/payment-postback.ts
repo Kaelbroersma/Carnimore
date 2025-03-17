@@ -37,16 +37,27 @@ export const handler: Handler = async (event) => {
     // Log incoming postback
     console.log('Payment postback received:', {
       timestamp: new Date().toISOString(),
-      requestId: event.requestContext?.requestId,
-      headers: event.headers,
-      body: event.body
+      requestId: event.requestContext?.requestId || 'no-request-id',
+      method: event.httpMethod,
+      headers: JSON.stringify(event.headers),
+      rawBody: event.body,
+      isBase64Encoded: event.isBase64Encoded || false,
+      contentType: event.headers['content-type'] || event.headers['Content-Type']
     });
 
     // Parse postback data
     let data: EPNResponse;
     try {
       // First try to parse as JSON
+      console.log('Attempting JSON parse:', {
+        timestamp: new Date().toISOString(),
+        body: event.body
+      });
       data = JSON.parse(event.body);
+      console.log('Successfully parsed JSON response:', {
+        timestamp: new Date().toISOString(),
+        parsedData: JSON.stringify(data)
+      });
     } catch (e) {
       // If JSON parse fails, try parsing as extended postback format
       try {
@@ -54,28 +65,49 @@ export const handler: Handler = async (event) => {
         const separator = event.body.includes(';') ? ';' : ',';
         console.log('Parsing extended postback format:', {
           timestamp: new Date().toISOString(),
-          requestId: event.requestContext?.requestId,
-          separator
+          requestId: event.requestContext?.requestId || 'no-request-id',
+          separator,
+          pairs: event.body.split(separator).map(pair => pair.trim())
         });
         data = Object.fromEntries(
           event.body.split(separator).map(pair => {
             const [key, value] = pair.split('=').map(s => decodeURIComponent(s.trim()));
+            console.log('Parsed key-value pair:', {
+              timestamp: new Date().toISOString(),
+              key,
+              value
+            });
             return [key, value];
           })
         ) as EPNResponse;
+        console.log('Successfully parsed extended format:', {
+          timestamp: new Date().toISOString(),
+          parsedData: JSON.stringify(data)
+        });
       } catch (e) {
         console.error('Failed to parse postback data:', {
           timestamp: new Date().toISOString(),
-          requestId: event.requestContext?.requestId,
-          body: event.body,
-          error: e instanceof Error ? e.message : 'Unknown error'
+          requestId: event.requestContext?.requestId || 'no-request-id',
+          rawBody: event.body,
+          error: e instanceof Error ? e.message : 'Unknown error',
+          errorStack: e instanceof Error ? e.stack : undefined
         });
         throw new Error('Invalid postback data format');
       }
     }
 
     // Validate RestrictKey if provided
+    console.log('Validating RestrictKey:', {
+      timestamp: new Date().toISOString(),
+      hasRestrictKey: !!data['Postback.RestrictKey'],
+      restrictKeyMatch: data['Postback.RestrictKey'] === EPN_RESTRICT_KEY
+    });
+    
     if (data['Postback.RestrictKey'] && data['Postback.RestrictKey'] !== EPN_RESTRICT_KEY) {
+      console.error('RestrictKey validation failed:', {
+        timestamp: new Date().toISOString(),
+        receivedKey: data['Postback.RestrictKey']
+      });
       throw new Error('Invalid RestrictKey');
     }
 
@@ -85,12 +117,16 @@ export const handler: Handler = async (event) => {
     const success = data.Success === 'Y';
     const respText = data.RespText;
     const authCode = data.AuthCode;
+    const avsResp = data.AVSResp;
+    const cvv2Resp = data.CVV2Resp;
 
     if (!transactionId || !orderId) {
       console.error('Missing required fields in postback:', {
         timestamp: new Date().toISOString(),
-        requestId: event.requestContext?.requestId,
-        receivedData: data
+        requestId: event.requestContext?.requestId || 'no-request-id',
+        receivedData: JSON.stringify(data),
+        hasTransactionId: !!transactionId,
+        hasOrderId: !!orderId
       });
       throw new Error('Missing required fields');
     }
@@ -98,22 +134,40 @@ export const handler: Handler = async (event) => {
     // Log extracted details
     console.log('Extracted postback details:', {
       timestamp: new Date().toISOString(),
-      requestId: event.requestContext?.requestId,
+      requestId: event.requestContext?.requestId || 'no-request-id',
       transactionId,
       orderId,
       success,
       respText,
-      authCode
+      authCode,
+      avsResponse: avsResp,
+      cvv2Response: cvv2Resp,
+      fullResponse: JSON.stringify(data)
     });
 
     // Update order status in Supabase
+    console.log('Updating order status:', {
+      timestamp: new Date().toISOString(),
+      orderId,
+      newStatus: success ? 'paid' : data.Success === 'N' ? 'failed' : 'pending',
+      transactionId
+    });
+
     const { error: updateError } = await supabase
       .from('orders')
       .update({
         payment_status: success ? 'paid' : 
                        data.Success === 'N' ? 'failed' : 'pending',
         payment_processor_id: transactionId,
-        payment_processor_response: data
+        payment_processor_response: {
+          success,
+          respText,
+          authCode,
+          avsResponse: avsResp,
+          cvv2Response: cvv2Resp,
+          transactionId,
+          fullResponse: data
+        }
       })
       .eq('order_id', orderId);
 

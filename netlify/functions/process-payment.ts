@@ -157,8 +157,11 @@ export const handler: Handler = async (event) => {
       CVV2Type: '1',
       CVV2: cvv,
       'Postback.OrderID': orderId,
+      'Postback.Description': `Order ${orderId}`,
       'Postback.Total': amount,
       'Postback.RestrictKey': EPN_RESTRICT_KEY,
+      PostbackID: orderId,
+      COMBINE_PB_RESPONSE: '1',
       NOMAIL_CARDHOLDER: '1',
       NOMAIL_MERCHANT: '1'
     });
@@ -180,7 +183,6 @@ export const handler: Handler = async (event) => {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
           'Accept': '*/*', 
-          'User-Agent': 'Carnimore/1.0',
         }
       });
 
