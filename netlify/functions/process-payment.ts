@@ -149,7 +149,7 @@ export const handler: Handler = async (event) => {
       RestrictKey: EPN_RESTRICT_KEY,
       RequestType: 'transaction',
       TranType: 'Sale',
-      Total: amount.toFixed(2),
+      Total: parseFloat(amount).toFixed(2),
       Address: billingAddress?.address || shippingAddress.address,
       Zip: billingAddress?.zipCode || shippingAddress.zipCode,
       CardNo: cardNumber,
@@ -159,14 +159,14 @@ export const handler: Handler = async (event) => {
       CVV2: cvv,
       'Postback.URL': `carnimore.netlify.app/.netlify/functions/payment-postback`,
       'Postback.OrderID': orderId,
-      'Postback.Total': amount.toFixed(2),
+      'Postback.Total': parseFloat(amount).toFixed(2),
       'Postback.RestrictKey': EPN_RESTRICT_KEY
     };
 
     console.log('Sending payment request to processor:', {
       timestamp: new Date().toISOString(),
       orderId,
-      amount: amount.toFixed(2)
+      amount: parseFloat(amount).toFixed(2)
     });
 
     // Create HTTPS request with proper TLS settings
