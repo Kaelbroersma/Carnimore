@@ -1,5 +1,6 @@
 import { Handler } from '@netlify/functions';
 import { createClient } from '@supabase/supabase-js';
+import { sanitizePaymentData } from '../../src/utils/sanitize';
 
 // Environment variables
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -38,30 +39,24 @@ export const handler: Handler = async (event) => {
     console.log('Payment postback received:', {
       timestamp: new Date().toISOString(),
       requestId: event.requestContext?.requestId || 'no-request-id',
-      method: event.httpMethod,
-      headers: JSON.stringify(event.headers),
-      rawBody: event.body,
-      isBase64Encoded: event.isBase64Encoded || false,
-      contentType: event.headers['content-type'] || event.headers['Content-Type']
+      // Only log non-sensitive metadata
+      method: event.httpMethod
     });
 
     // Parse postback data
     let data: EPNResponse;
     try {
-      // Parse the JSON response
-      const parsedData = JSON.parse(event.body);
-      
-      // If FullResponse is a string containing JSON, parse it again
-      if (typeof parsedData.FullResponse === 'string' && parsedData.FullResponse.startsWith('{')) {
-        parsedData.FullResponse = JSON.parse(parsedData.FullResponse);
-      }
-      
-      console.log('Parsed postback data:', {
+      // First try to parse as JSON
+      console.log('Attempting JSON parse:', {
         timestamp: new Date().toISOString(),
-        parsedData: JSON.stringify(parsedData)
+        body: event.body
       });
-      
-      data = parsedData;
+      data = JSON.parse(event.body);
+      console.log('Successfully parsed JSON response:', {
+        timestamp: new Date().toISOString(),
+        // Log sanitized version of response
+        parsedData: JSON.stringify(sanitizePaymentData(data))
+      });
     } catch (e) {
       // If JSON parse fails, try parsing as extended postback format
       try {
@@ -86,15 +81,14 @@ export const handler: Handler = async (event) => {
         ) as EPNResponse;
         console.log('Successfully parsed extended format:', {
           timestamp: new Date().toISOString(),
-          parsedData: JSON.stringify(data)
+          parsedData: JSON.stringify(sanitizePaymentData(data))
         });
       } catch (e) {
         console.error('Failed to parse postback data:', {
           timestamp: new Date().toISOString(),
           requestId: event.requestContext?.requestId || 'no-request-id',
-          rawBody: event.body,
           error: e instanceof Error ? e.message : 'Unknown error',
-          errorStack: e instanceof Error ? e.stack : undefined
+          name: e instanceof Error ? e.name : 'Unknown'
         });
         throw new Error('Invalid postback data format');
       }
@@ -115,33 +109,12 @@ export const handler: Handler = async (event) => {
       throw new Error('Invalid RestrictKey');
     }
 
-    // Parse the FullResponse field to extract success status and message
-    let success = false;
-    let respText = 'Unknown response';
-    let fullResponseText = '';
-    
-    if (data.FullResponse) {
-      // Handle both string and parsed JSON formats
-      const fullResponseStr = typeof data.FullResponse === 'string' 
-        ? data.FullResponse 
-        : data.FullResponse.FullResponse || '';
-        
-      // Remove any surrounding quotes and get clean response
-      fullResponseText = fullResponseStr.replace(/^"/, '').replace(/"$/, '').split(',')[0];
-      
-      // First character indicates success (Y/N/U)
-      success = fullResponseText.charAt(0) === 'Y';
-      
-      // Rest of the text is the response message
-      respText = fullResponseText.substring(1).trim();
-      
-      console.log('Parsed FullResponse:', {
-        timestamp: new Date().toISOString(),
-        fullResponseText,
-        success,
-        respText
-      });
-    }
+    // Extract transaction details
+    const fullResponse = data.FullResponse?.replace(/^"/, '').replace(/"$/, '') || '';
+    // Extract success status from first character of FullResponse
+    const success = fullResponse.charAt(0) === 'Y';
+    // Extract response message from remaining text
+    const respText = fullResponse.substring(1) || 'Unknown response';
     
     const transactionId = data.XactID;
     const orderId = data['Postback.OrderID'] || data.OrderID;
@@ -153,7 +126,6 @@ export const handler: Handler = async (event) => {
       console.error('Missing required fields in postback:', {
         timestamp: new Date().toISOString(),
         requestId: event.requestContext?.requestId || 'no-request-id',
-        receivedData: JSON.stringify(data),
         hasTransactionId: !!transactionId,
         hasOrderId: !!orderId
       });
@@ -163,15 +135,12 @@ export const handler: Handler = async (event) => {
     // Log extracted details
     console.log('Extracted postback details:', {
       timestamp: new Date().toISOString(),
+      // Only log non-sensitive transaction details
       requestId: event.requestContext?.requestId || 'no-request-id',
       transactionId,
       orderId,
       success,
-      respText,
-      authCode,
-      avsResponse: avsResp,
-      cvv2Response: cvv2Resp,
-      fullResponse: JSON.stringify(data)
+      status: success ? 'paid' : 'failed'
     });
 
     // Update order status in Supabase
@@ -186,17 +155,17 @@ export const handler: Handler = async (event) => {
       .from('orders')
       .update({
         payment_status: success ? 'paid' : 
-                       fullResponseText.charAt(0) === 'N' ? 'failed' : 'pending',
+                       fullResponse.charAt(0) === 'N' ? 'failed' : 'pending',
         payment_processor_id: transactionId,
         payment_processor_response: {
           success,
           respText,
-          fullResponseText,
+          fullResponse,
           authCode,
           avsResponse: avsResp,
           cvv2Response: cvv2Resp,
           transactionId,
-          rawResponse: data
+          fullResponse: data
         }
       })
       .eq('order_id', orderId);
@@ -225,7 +194,7 @@ export const handler: Handler = async (event) => {
       body: JSON.stringify({ 
         success: true,
         status: success ? 'paid' : 
-                fullResponseText.charAt(0) === 'N' ? 'failed' : 'pending',
+                fullResponse.charAt(0) === 'N' ? 'failed' : 'pending',
         message: respText || (success ? 'Payment approved' : 'Payment declined'),
         transactionId,
         authCode,
@@ -237,9 +206,10 @@ export const handler: Handler = async (event) => {
     console.error('Payment postback error:', {
       timestamp: new Date().toISOString(),
       requestId: event.requestContext?.requestId,
-      name: error.name,
-      message: error.message,
-      stack: error.stack
+      error: {
+        name: error.name,
+        message: error.message
+      }
     });
 
     return {
