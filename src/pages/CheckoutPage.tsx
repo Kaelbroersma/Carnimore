@@ -59,34 +59,50 @@ const CheckoutPage: React.FC = () => {
   useEffect(() => {
     // Subscribe to order status updates
     let subscription: any;
-    
+    let isSubscribed = true;
+
     if (orderId) {
-      subscription = paymentService.subscribeToOrder(orderId, (status) => {
-        setPaymentStatus(status as 'pending' | 'completed' | 'failed');
-        
-        // Handle status changes
-        switch (status) {
-          case 'completed':
-            clearCart();
-            setTimeout(() => {
-              navigate('/payment/success', { 
-                state: { orderId } 
-              });
-            }, 2000);
-            break;
+      const setupSubscription = async () => {
+        try {
+          subscription = await paymentService.subscribeToOrder(orderId, (status) => {
+            if (!isSubscribed) return;
+
+            setPaymentStatus(status as 'pending' | 'completed' | 'failed');
             
-          case 'failed':
-            setTimeout(() => {
-              navigate('/payment/error', { 
-                state: { orderId } 
-              });
-            }, 2000);
-            break;
+            // Handle status changes
+            switch (status) {
+              case 'completed':
+                clearCart();
+                setTimeout(() => {
+                  if (isSubscribed) {
+                    navigate('/payment/success', { 
+                      state: { orderId } 
+                    });
+                  }
+                }, 2000);
+                break;
+                
+              case 'failed':
+                setTimeout(() => {
+                  if (isSubscribed) {
+                    navigate('/payment/error', { 
+                      state: { orderId } 
+                    });
+                  }
+                }, 2000);
+                break;
+            }
+          });
+        } catch (error) {
+          console.error('Failed to setup order subscription:', error);
         }
-      });
+      };
+
+      setupSubscription();
     }
 
     return () => {
+      isSubscribed = false;
       if (subscription) {
         subscription.unsubscribe();
       }

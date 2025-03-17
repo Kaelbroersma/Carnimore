@@ -38,22 +38,44 @@ export const paymentService = {
   async subscribeToOrder(orderId: string, callback: (status: string) => void) {
     try {
       // Subscribe to order status changes via Netlify function
-      const result = await callNetlifyFunction('subscribe-to-order', { orderId });
-      
-      if (result.error) {
-        throw new Error(result.error.message);
-      }
+      const checkOrderStatus = async () => {
+        try {
+          const result = await callNetlifyFunction('subscribe-to-order', { orderId });
+          
+          if (result.error) {
+            throw new Error(result.error.message);
+          }
 
-      // Return unsubscribe function
+          if (result.data?.status) {
+            callback(result.data.status);
+            
+            // If payment is completed or failed, stop polling
+            if (['completed', 'failed'].includes(result.data.status)) {
+              clearInterval(interval);
+            }
+          }
+        } catch (error) {
+          console.error('Failed to check order status:', error);
+        }
+      };
+
+      // Check immediately
+      await checkOrderStatus();
+
+      // Then poll every 2 seconds
+      const interval = setInterval(checkOrderStatus, 2000);
+
+      // Return cleanup function
       return {
         unsubscribe: () => {
-          // Cleanup subscription
-          callNetlifyFunction('unsubscribe-from-order', { orderId });
+          clearInterval(interval);
         }
       };
     } catch (error) {
       console.error('Failed to subscribe to order:', error);
-      throw error;
+      return {
+        unsubscribe: () => {} // Provide empty cleanup function
+      };
     }
   },
 
