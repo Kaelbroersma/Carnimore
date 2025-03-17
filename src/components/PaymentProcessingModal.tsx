@@ -4,37 +4,17 @@ import { CheckCircle, AlertCircle, Loader } from 'lucide-react';
 
 interface PaymentProcessingModalProps {
   isOpen: boolean;
-  status: 'processing' | 'success' | 'error';
-  message?: string | null;
-  transactionId?: string;
-  orderId?: string;
-  authCode?: string;
-  redirectDelay?: number; // Default is now 5000ms (5 seconds) for success/error states
+  orderId: string;
+  status: 'pending' | 'completed' | 'failed';
+  message?: string;
 }
 
 const PaymentProcessingModal: React.FC<PaymentProcessingModalProps> = ({
   isOpen,
-  status,
-  message,
-  transactionId,
   orderId,
-  authCode,
-  redirectDelay = 5000
+  status,
+  message
 }) => {
-  // Determine message based on status if none provided
-  const getStatusMessage = () => {
-    if (message) return message;
-    
-    switch (status) {
-      case 'processing':
-        return 'Please wait while we process your payment...';
-      case 'success':
-        return 'Your payment has been processed successfully.';
-      case 'error':
-        return 'An error occurred while processing your payment. Please try again.';
-    }
-  };
-
   return (
     <AnimatePresence>
       {isOpen && (
@@ -53,62 +33,37 @@ const PaymentProcessingModal: React.FC<PaymentProcessingModalProps> = ({
             transition={{ duration: 0.3 }}
           >
             <div className="flex flex-col items-center text-center">
-              {status === 'processing' && (
+              {status === 'pending' && (
                 <>
                   <Loader className="w-16 h-16 text-tan animate-spin mb-4" />
                   <h2 className="text-xl font-bold mb-2">Processing Payment</h2>
                   <div className="space-y-2">
                     <p className="text-gray-400">Please wait while we process your payment...</p>
-                    <p className="text-sm text-gray-400">This may take a couple of minutes to complete.</p>
+                    <p className="text-sm text-gray-400">This may take a moment to complete.</p>
                     <p className="text-sm text-gray-400">Do not refresh or close this page.</p>
-                    <p className="text-sm text-gray-400">Your order ID: {orderId}</p>
+                    <p className="text-sm text-gray-400">Order ID: {orderId}</p>
                   </div>
                 </>
               )}
 
-              {status === 'success' && (
+              {status === 'completed' && (
                 <>
                   <CheckCircle className="w-16 h-16 text-green-500 mb-4" />
-                  <h2 className="text-xl font-bold mb-2">Payment Approved</h2>
+                  <h2 className="text-xl font-bold mb-2">Payment Successful</h2>
                   <div className="space-y-2">
-                    <p className="text-gray-400">{getStatusMessage()}</p>
-                    {orderId && (
-                      <p className="text-sm text-gray-400">Order ID: {orderId}</p>
-                    )}
-                    {transactionId && (
-                      <p className="text-sm text-gray-400">Transaction ID: {transactionId}</p>
-                    )}
-                    {authCode && (
-                      <p className="text-sm text-gray-400">Auth Code: {authCode}</p>
-                    )}
-                    <p className="text-sm text-gray-400 mt-4">
-                      Redirecting to confirmation page in {Math.ceil(redirectDelay/1000)} seconds...
-                    </p>
+                    <p className="text-gray-400">{message || 'Your payment has been processed successfully.'}</p>
+                    <p className="text-sm text-gray-400">Order ID: {orderId}</p>
                   </div>
                 </>
               )}
 
-              {status === 'error' && (
+              {status === 'failed' && (
                 <>
                   <AlertCircle className="w-16 h-16 text-red-500 mb-4" />
-                  <h2 className="text-xl font-bold mb-2">
-                    {message?.toLowerCase().includes('declined') ? 'Payment Declined' : 
-                     message?.toLowerCase().includes('unable') ? 'Payment Unprocessed' : 
-                     'Payment Failed'}
-                  </h2>
+                  <h2 className="text-xl font-bold mb-2">Payment Failed</h2>
                   <div className="space-y-2">
-                    <p className="text-gray-400">{getStatusMessage()}</p>
-                    {orderId && (
-                      <p className="text-sm text-gray-400">Order ID: {orderId}</p>
-                    )}
-                    <p className="text-sm text-gray-400 mt-4">
-                      {message?.toLowerCase().includes('unable') ?
-                        'Please try your payment again in a few moments.' :
-                        'Please check your payment details and try again.'}
-                    </p>
-                    <p className="text-sm text-gray-400">
-                      Redirecting in {Math.ceil(redirectDelay/1000)} seconds...
-                    </p>
+                    <p className="text-gray-400">{message || 'There was an error processing your payment. Please try again.'}</p>
+                    <p className="text-sm text-gray-400">Order ID: {orderId}</p>
                   </div>
                 </>
               )}

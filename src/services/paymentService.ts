@@ -1,52 +1,30 @@
+import { createClient } from '@supabase/supabase-js';
 import type { Result } from '../types/database';
-import type { PaymentData, PaymentResult, EPNResponse } from '../types/payment';
+import type { PaymentData, PaymentResult } from '../types/payment';
 
-const formatAmount = (amount: number): string => {
-  // Ensure amount has 2 decimal places and leading 0 if under $1
-  return Number(amount).toFixed(2).replace(/^(\d)\./, '0$1.');
-};
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+// Initialize Supabase client
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 export const paymentService = {
-  subscribeToPaymentUpdates(orderId: string, callback: (data: any) => void) {
-    // Create Supabase realtime subscription
-    const supabase = createClient(
-      import.meta.env.SUPABASE_URL,
-      import.meta.env.SUPABASE_ANON_KEY
-    );
-
-    // Subscribe to payment_logs table for this order
-    const subscription = supabase
-      .channel('payment_updates')
+  subscribeToOrder(orderId: string, callback: (status: string) => void) {
+    return supabase
+      .channel('order_updates')
       .on(
         'postgres_changes',
         {
-          event: '*',
+          event: 'UPDATE',
           schema: 'public',
-          table: 'payment_logs',
+          table: 'orders',
           filter: `order_id=eq.${orderId}`
         },
         (payload) => {
-          // Extract payment status from payload
-          const status = payload.new.payment_status;
-          const response = payload.new.processor_response;
-          
-          callback({
-            success: status === 'completed',
-            status: status === 'completed' ? 'approved' :
-                    status === 'failed' ? 'declined' : 'pending',
-            message: response?.RespText || response?.Response,
-            transactionId: response?.XactID || response?.TransactionID,
-            authCode: response?.AuthCode,
-            orderId: payload.new.order_id
-          });
+          callback(payload.new.payment_status);
         }
       )
       .subscribe();
-
-    // Return unsubscribe function
-    return () => {
-      subscription.unsubscribe();
-    };
   },
 
   async processPayment(data: PaymentData): Promise<Result<PaymentResult>> {
@@ -56,13 +34,10 @@ export const paymentService = {
         throw new Error('Missing required payment fields');
       }
 
-      // Format expiry year to 2 digits
-      const expiryYear = data.expiryYear.slice(-2);
-      
       // Format card number by removing spaces
       const cardNumber = data.cardNumber.replace(/\s+/g, '');
       
-      // Validate card number using Luhn algorithm
+      // Validate card number format
       if (!/^\d{15,16}$/.test(cardNumber)) {
         throw new Error('Invalid card number format');
       }
@@ -81,38 +56,49 @@ export const paymentService = {
         throw new Error('Invalid CVV format');
       }
 
-      // Format amount according to EPN requirements
-      const formattedAmount = formatAmount(Number(data.amount));
+      // Format amount to 2 decimal places
+      const formattedAmount = Number(data.amount).toFixed(2);
 
-      // Send payment request - don't wait for response
-      await fetch('/.netlify/functions/process-payment', {
+      // Send payment request to Netlify function
+      const response = await fetch('/.netlify/functions/process-payment', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          ...data,
           cardNumber,
           expiryMonth,
-          expiryYear,
-          amount: formattedAmount
+          expiryYear: data.expiryYear.slice(-2), // Convert to 2-digit year
+          cvv: data.cvv,
+          amount: formattedAmount,
+          orderId: data.orderId,
+          address: data.address,
+          zip: data.zip
         })
       });
+
+      if (!response.ok) {
+        throw new Error('Failed to initiate payment');
+      }
 
       // Return initial response with orderId
       return {
         data: {
-          orderId: data.orderId
+          orderId: data.orderId,
+          status: 'pending',
+          message: 'Payment processing initiated'
         },
         error: null
       };
 
     } catch (error: any) {
-      console.error('Payment error:', error.message);
-
+      console.error('Payment error:', error);
       return {
         data: null,
-        error: { message: 'Failed to send payment request. Please try again.' }
+        error: {
+          message: error.message || 'Failed to process payment',
+          details: error.stack
+        }
       };
     }
   }

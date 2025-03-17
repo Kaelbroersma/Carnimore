@@ -13,70 +13,46 @@ const CheckoutPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { items, clearCart } = useCartStore();
+  const [orderId, setOrderId] = useState<string | null>(null);
+  const [paymentStatus, setPaymentStatus] = useState<'pending' | 'completed' | 'failed'>('pending');
+  const [showProcessingModal, setShowProcessingModal] = useState(false);
   const [step, setStep] = useState<'details' | 'payment'>('details');
   const [loading, setLoading] = useState(false);
-  const [paymentStatus, setPaymentStatus] = useState<'processing' | 'success' | 'error'>('processing');
-  const [showProcessingModal, setShowProcessingModal] = useState(false);
-  const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  const unsubscribeRef = useRef<(() => void) | null>(null);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [result, setResult] = useState<any>(null);
 
-  // Cleanup subscriptions and timeouts
   useEffect(() => {
-    return () => {
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current();
-      }
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
-  const handlePaymentUpdate = async (data: any) => {
-    // Clear timeout since we got a response
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-
-    if (data.success) {
-      setPaymentStatus('success');
-      setResult(data);
-      
-      // Show success state for 5 seconds then redirect
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      clearCart();
-      navigate('/payment/success', { 
-        state: { 
-          transactionId: data.transactionId,
-          authCode: data.authCode,
-          orderTotal: total,
-          orderId: data.orderId
+    // Cleanup subscription on unmount
+    let subscription: any;
+    
+    if (orderId) {
+      subscription = paymentService.subscribeToOrder(orderId, (status) => {
+        switch (status) {
+          case 'completed':
+            setPaymentStatus('completed');
+            // Redirect to success page after delay
+            setTimeout(() => {
+              navigate('/payment/success', { state: { orderId } });
+            }, 2000);
+            break;
+          case 'failed':
+            setPaymentStatus('failed');
+            // Redirect to error page after delay
+            setTimeout(() => {
+              navigate('/payment/error', { state: { orderId } });
+            }, 2000);
+            break;
         }
       });
-    } else if (data.status === 'declined') {
-      setPaymentStatus('error');
-      setError(data.message || 'Payment was declined. Please check your card details and try again.');
-      setResult(data);
-      
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      navigate('/payment/declined', {
-        state: { message: data.message }
-      });
-    } else {
-      setPaymentStatus('error');
-      setError(data.message || 'Unable to process payment at this time. Please try again in a few moments.');
-      setResult(data);
-      
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      navigate('/payment/error', {
-        state: { message: data.message }
-      });
     }
-  };
-  
+
+    return () => {
+      if (subscription) {
+        subscription.unsubscribe();
+      }
+    };
+  }, [orderId]);
+
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const tax = subtotal * 0.08; // 8% tax
   const total = subtotal + tax;
@@ -93,8 +69,11 @@ const CheckoutPage: React.FC = () => {
     cardNumber: '',
     expiryDate: '',
     cvv: '',
-    nameOnCard: ''
+    nameOnCard: '',
+    expiryMonth: '',
+    expiryYear: ''
   });
+
   const [billingInfo, setBillingInfo] = useState({
     address: '',
     city: '',
@@ -136,7 +115,6 @@ const CheckoutPage: React.FC = () => {
     const match = (matches && matches[0]) || '';
     const parts = [];
 
-    // Split into groups of 4
     for (let i = 0, len = match.length; i < len; i += 4) {
       parts.push(match.substring(i, i + 4));
     }
@@ -157,69 +135,37 @@ const CheckoutPage: React.FC = () => {
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    setShowProcessingModal(true);
-    setPaymentStatus('processing');
-    setLoading(true);
-    setError(null);
+    e.preventDefault();
     
-    const orderId = crypto.randomUUID(); 
+    // Generate order ID
+    const newOrderId = crypto.randomUUID();
+    setOrderId(newOrderId);
+    setShowProcessingModal(true);
 
     try {
-      // Format card number by removing spaces
-      const cardNumber = formData.cardNumber.replace(/\s+/g, '');
-      
-      // Extract month and year from expiry date
-      const [expiryMonth, expiryYear] = formData.expiryDate?.split('/') || [];
-      
-      if (!expiryMonth || !expiryYear) {
-        throw new Error('Invalid expiry date format');
-      }
-      
-      const paymentData: PaymentData = {
-        cardNumber,
-        expiryMonth: expiryMonth.trim(),
-        expiryYear: `20${expiryYear.trim()}`, // Convert to full year
+      const result = await paymentService.processPayment({
+        cardNumber: formData.cardNumber,
+        expiryMonth: formData.expiryMonth,
+        expiryYear: formData.expiryYear,
         cvv: formData.cvv,
-        orderId: orderId, // Use the generated orderId
         amount: total,
-        address: billingInfo.sameAsShipping ? formData.address : billingInfo.address,
-        zip: billingInfo.sameAsShipping ? formData.zipCode : billingInfo.zipCode
-      };
-
-      const result = await paymentService.processPayment(paymentData);
+        address: formData.address,
+        zip: formData.zipCode,
+        orderId: newOrderId
+      });
 
       if (result.error) {
         throw new Error(result.error.message);
       }
-      
-      // Set initial state with orderId
-      setResult({ orderId: result.data.orderId });
 
-      // Subscribe to payment updates
-      unsubscribeRef.current = paymentService.subscribeToPaymentUpdates(
-        result.data.orderId,
-        handlePaymentUpdate
-      );
-
-      // Set a timeout to show error if no postback received
-      timeoutRef.current = setTimeout(() => {
-        setPaymentStatus('error');
-        setError('Payment processing timeout. Please check your email for confirmation or contact support if the charge appears on your card.');
+    } catch (error: any) {
+      console.error('Payment error:', error);
+      setPaymentStatus('failed');
+      setTimeout(() => {
         navigate('/payment/error', {
-          state: { message: 'Payment processing timeout' }
+          state: { message: error.message }
         });
-      }, 120000); // 2 minute timeout
-
-    } catch (err: any) {
-      console.error('Checkout error:', err);
-      setPaymentStatus('error');
-      setError(err.message || 'An unexpected error occurred. Please try again.');
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      navigate('/payment/error', {
-        state: { message: err.message }
-      });
-    } finally {  
-      setLoading(false);
+      }, 2000);
     }
   };
 
@@ -241,13 +187,10 @@ const CheckoutPage: React.FC = () => {
 
   return (
     <div className="pt-24 pb-16">
-      <PaymentProcessingModal 
+      <PaymentProcessingModal
         isOpen={showProcessingModal}
+        orderId={orderId || ''}
         status={paymentStatus}
-        orderId={result?.orderId}
-        message={error || result?.message}
-        transactionId={result?.transactionId}
-        authCode={result?.authCode}
       />
 
       <div className="container mx-auto px-4">
@@ -391,7 +334,6 @@ const CheckoutPage: React.FC = () => {
                         <Button
                           variant="primary"
                           onClick={() => {
-                            // Auto-fill billing info and name on card when moving to payment step
                             if (billingInfo.sameAsShipping) {
                               setBillingInfo(prev => ({
                                 ...prev,
@@ -425,7 +367,6 @@ const CheckoutPage: React.FC = () => {
                               setBillingInfo(prev => ({
                                 ...prev,
                                 sameAsShipping: isChecked,
-                                // If checked, copy shipping address
                                 ...(isChecked ? {
                                   address: formData.address,
                                   city: formData.city,
@@ -433,7 +374,6 @@ const CheckoutPage: React.FC = () => {
                                   zipCode: formData.zipCode
                                 } : {})
                               }));
-                              // If checked, also set name on card
                               if (isChecked) {
                                 setFormData(prev => ({
                                   ...prev,
@@ -523,7 +463,7 @@ const CheckoutPage: React.FC = () => {
                         <input
                           type="text"
                           required
-                          maxLength={19} // Allows for spaces in 16-digit cards
+                          maxLength={19}
                           placeholder="1234 5678 9012 3456"
                           value={formData.cardNumber}
                           onChange={(e) => setFormData(prev => ({
@@ -610,7 +550,6 @@ const CheckoutPage: React.FC = () => {
                         />
                         <div className="ml-4 flex-1">
                           <h3 className="font-medium">{item.name.split(' - ')[0]}</h3>
-                          {/* Display options as line items */}
                           {item.options && Object.entries(item.options).map(([key, value]) => (
                             value && (
                               <p key={key} className="text-sm text-gray-400">
@@ -660,4 +599,4 @@ const CheckoutPage: React.FC = () => {
   );
 };
 
-export default CheckoutPage
+export default CheckoutPage;

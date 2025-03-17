@@ -4,9 +4,22 @@ import { createClient } from '@supabase/supabase-js';
 // Environment variables
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const EPN_RESTRICT_KEY = process.env.EPN_X_TRAN;
 
 // Initialize Supabase client
 const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
+
+interface EPNResponse {
+  Success: 'Y' | 'N' | 'U';
+  RespText: string;
+  XactID?: string;
+  AuthCode?: string;
+  AVSResp?: string;
+  CVV2Resp?: string;
+  OrderID?: string;
+  'Postback.OrderID'?: string;
+  'Postback.RestrictKey'?: string;
+}
 
 export const handler: Handler = async (event) => {
   const headers = {
@@ -18,7 +31,7 @@ export const handler: Handler = async (event) => {
 
   try {
     if (!event.body) {
-      throw new Error('Missing request body');
+      throw new Error('Missing postback data');
     }
 
     // Log incoming postback
@@ -30,33 +43,43 @@ export const handler: Handler = async (event) => {
     });
 
     // Parse postback data
-    let data: Record<string, string> = {};
+    let data: EPNResponse;
     try {
-      // Try both semicolon and comma separators
-      const separator = event.body.includes(';') ? ';' : ',';
-      data = Object.fromEntries(
-        event.body.split(separator).map(pair => {
-          const [key, value] = pair.split('=').map(s => decodeURIComponent(s.trim()));
-          return [key, value];
-        })
-      );
+      // First try to parse as JSON
+      data = JSON.parse(event.body);
     } catch (e) {
-      console.error('Failed to parse postback data:', {
-        timestamp: new Date().toISOString(),
-        requestId: event.requestContext?.requestId,
-        body: event.body,
-        error: e instanceof Error ? e.message : 'Unknown error'
-      });
-      throw new Error('Invalid postback data format');
+      // If JSON parse fails, try parsing as extended postback format
+      try {
+        // Try both semicolon and comma separators
+        const separator = event.body.includes(';') ? ';' : ',';
+        data = Object.fromEntries(
+          event.body.split(separator).map(pair => {
+            const [key, value] = pair.split('=').map(s => decodeURIComponent(s.trim()));
+            return [key, value];
+          })
+        ) as EPNResponse;
+      } catch (e) {
+        console.error('Failed to parse postback data:', {
+          timestamp: new Date().toISOString(),
+          requestId: event.requestContext?.requestId,
+          body: event.body,
+          error: e instanceof Error ? e.message : 'Unknown error'
+        });
+        throw new Error('Invalid postback data format');
+      }
+    }
+
+    // Validate RestrictKey if provided
+    if (data['Postback.RestrictKey'] && data['Postback.RestrictKey'] !== EPN_RESTRICT_KEY) {
+      throw new Error('Invalid RestrictKey');
     }
 
     // Extract transaction details
     const transactionId = data.XactID;
-    const orderId = data['Postback.OrderID'] || data.PostbackID || data.OrderID || data.orderId;
-    const success = data.Success === 'Y' || data.Response?.startsWith('Y');
-    const respText = data.RespText || data.Response;
+    const orderId = data['Postback.OrderID'] || data.OrderID;
+    const success = data.Success === 'Y';
+    const respText = data.RespText;
     const authCode = data.AuthCode;
-    const amount = data.Total || data['Postback.Total'];
 
     if (!transactionId || !orderId) {
       console.error('Missing required fields in postback:', {
@@ -78,70 +101,25 @@ export const handler: Handler = async (event) => {
       authCode
     });
 
-    console.log('Processing payment postback:', {
-      timestamp: new Date().toISOString(),
-      requestId: event.requestContext?.requestId,
-      transactionId,
-      orderId,
-      success,
-      authCode
-    });
+    // Update order status in Supabase
+    const { error: updateError } = await supabase
+      .from('orders')
+      .update({
+        payment_status: success ? 'completed' : 
+                       data.Success === 'N' ? 'failed' : 'pending',
+        payment_processor_id: transactionId,
+        payment_processor_response: data
+      })
+      .eq('order_id', orderId);
 
-    // Update payment_logs table
-    const logResult = await supabase.from('payment_logs').upsert({
-      transaction_id: transactionId,
-      order_id: orderId,
-      payment_status: success ? 'completed' : 
-                     data.Success === 'N' ? 'failed' : 'pending',
-      processor_response: data,
-      updated_at: new Date().toISOString()
-    }, {
-      onConflict: 'transaction_id'
-    });
-
-    if (logResult.error) {
-      console.error('Failed to update payment_logs:', {
+    if (updateError) {
+      console.error('Failed to update order:', {
         timestamp: new Date().toISOString(),
         requestId: event.requestContext?.requestId,
-        error: logResult.error,
-        transactionId,
+        error: updateError,
         orderId
       });
-    }
-
-    // If payment was successful, update orders table
-    if (success) {
-      const orderResult = await supabase.from('orders').update({
-        payment_status: 'paid'
-      }).eq('order_id', orderId);
-
-      if (orderResult.error) {
-        console.error('Failed to update order:', {
-          timestamp: new Date().toISOString(),
-          requestId: event.requestContext?.requestId,
-          error: orderResult.error,
-          orderId
-        });
-      }
-
-      // Create payment record
-      const paymentResult = await supabase.from('payments').insert({
-        order_id: orderId,
-        payment_method: 'credit_card',
-        payment_status: 'success',
-        amount_paid: amount,
-        transaction_id: transactionId
-      });
-
-      if (paymentResult.error) {
-        console.error('Failed to create payment record:', {
-          timestamp: new Date().toISOString(),
-          requestId: event.requestContext?.requestId,
-          error: paymentResult.error,
-          transactionId,
-          orderId
-        });
-      }
+      throw new Error('Failed to update order status');
     }
 
     console.log('Payment postback processed successfully:', {
@@ -156,21 +134,23 @@ export const handler: Handler = async (event) => {
       statusCode: 200,
       headers,
       body: JSON.stringify({ 
-        success,
-        status: success ? 'approved' : 
-                data.Success === 'N' ? 'declined' : 'pending',
+        success: true,
+        status: success ? 'completed' : 
+                data.Success === 'N' ? 'failed' : 'pending',
         message: respText || (success ? 'Payment approved' : 'Payment declined'),
         transactionId,
         authCode,
         orderId
       })
     };
+
   } catch (error: any) {
     console.error('Payment postback error:', {
       timestamp: new Date().toISOString(),
       requestId: event.requestContext?.requestId,
       name: error.name,
-      message: error.message
+      message: error.message,
+      stack: error.stack
     });
 
     return {
@@ -178,7 +158,8 @@ export const handler: Handler = async (event) => {
       headers,
       body: JSON.stringify({
         success: false,
-        message: 'Failed to process postback'
+        message: 'Failed to process postback',
+        error: error.message
       })
     };
   }
