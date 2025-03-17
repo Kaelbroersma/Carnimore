@@ -1,6 +1,5 @@
 import { Handler } from '@netlify/functions';
-import * as https from 'https';
-import * as tls from 'tls';
+import https from 'https';
 import { createClient } from '@supabase/supabase-js';
 
 // Environment variables
@@ -143,68 +142,55 @@ export const handler: Handler = async (event) => {
     console.log('Order items created successfully:', { timestamp: new Date().toISOString(), orderId });
 
     // Build payment processor request payload
-    const paymentPayload = {
+    const params = new URLSearchParams({
       ePNAccount: EPN_ACCOUNT,
       RestrictKey: EPN_RESTRICT_KEY,
       RequestType: 'transaction',
       TranType: 'Sale',
-      Total: parseFloat(amount).toFixed(2),
-      Address: billingAddress?.address || shippingAddress.address,
-      Zip: billingAddress?.zipCode || shippingAddress.zipCode,
-      CardNo: cardNumber,
-      ExpMonth: expiryMonth,
-      ExpYear: expiryYear,
+      IndustryType: 'E',
+      Total: amount,
+      Address: billingAddress?.address || shippingAddress.address || '',
+      Zip: billingAddress?.zipCode || shippingAddress.zipCode || '',
+      CardNo: cardNumber.replace(/\s+/g, ''),
+      ExpMonth: expiryMonth.padStart(2, '0'),
+      ExpYear: expiryYear.slice(-2),
       CVV2Type: '1',
       CVV2: cvv,
-      OrderID: orderId,
-      'Postback.URL': `${process.env.URL}/.netlify/functions/payment-postback`,
       'Postback.OrderID': orderId,
-      'Postback.Total': parseFloat(amount).toFixed(2),
-      'Postback.RestrictKey': EPN_RESTRICT_KEY
-    };
+      'Postback.Total': amount,
+      'Postback.RestrictKey': EPN_RESTRICT_KEY,
+      NOMAIL_CARDHOLDER: '1',
+      NOMAIL_MERCHANT: '1'
+    });
 
     console.log('Sending payment request to processor:', {
       timestamp: new Date().toISOString(),
       orderId,
-      amount: parseFloat(amount).toFixed(2)
+      amount
     });
 
     // Create HTTPS request with proper TLS settings
-    const makeRequest = () => new Promise((resolve, reject) => {
-      const request = https.request(EPN_API_URL, {
+    const makeRequest = async () => {
+      const response = await fetch(EPN_API_URL, {
         method: 'POST',
+        agent: new https.Agent({
+          minVersion: 'TLSv1.2'
+        }),
+        body: params.toString(),
         headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': '*/*', 
           'User-Agent': 'Carnimore/1.0',
-          'X-EPN-Account': EPN_ACCOUNT
-        },
-        // TLS Options
-        minVersion: 'TLSv1.2',
-        maxVersion: 'TLSv1.2',
-        rejectUnauthorized: true,
-        ciphers: 'ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256'
+        }
       });
-
-      request.on('error', (error) => {
-        console.error('Payment processor request error:', {
-          timestamp: new Date().toISOString(),
-          error: error.message,
-          orderId
-        });
-        reject(error);
-      });
-
-      request.write(JSON.stringify(paymentPayload));
-      request.end();
 
       console.log('Payment request sent to processor:', { 
         timestamp: new Date().toISOString(),
         orderId 
       });
 
-      resolve(true);
-    });
+      return response;
+    };
 
     // Send the request
     await makeRequest();
