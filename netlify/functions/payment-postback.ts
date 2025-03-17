@@ -17,6 +17,7 @@ interface EPNResponse {
   AVSResp?: string;
   CVV2Resp?: string;
   OrderID?: string;
+  Total?: string;
   'Postback.OrderID'?: string;
   'Postback.RestrictKey'?: string;
 }
@@ -46,54 +47,39 @@ export const handler: Handler = async (event) => {
     });
 
     // Parse postback data
-    let data: EPNResponse;
+    let data: EPNResponse | null = null;
+    const rawBody = event.body;
+
     try {
-      // First try to parse as JSON
-      console.log('Attempting JSON parse:', {
+      console.log('Raw postback data:', {
         timestamp: new Date().toISOString(),
-        body: event.body
+        body: rawBody
       });
-      data = JSON.parse(event.body);
-      console.log('Successfully parsed JSON response:', {
+
+      // Parse EPN's response format
+      // Format is typically: Success=Y,RespText=Approved,XactID=12345,...
+      const pairs = rawBody.split(',').map(pair => pair.trim());
+      
+      data = pairs.reduce((acc, pair) => {
+        const [key, value] = pair.split('=').map(s => decodeURIComponent(s.trim()));
+        return { ...acc, [key]: value };
+      }, {} as EPNResponse);
+
+      console.log('Parsed postback data:', {
         timestamp: new Date().toISOString(),
-        parsedData: JSON.stringify(data)
+        data: JSON.stringify(data)
       });
-    } catch (e) {
-      // If JSON parse fails, try parsing as extended postback format
-      try {
-        // Try both semicolon and comma separators
-        const separator = event.body.includes(';') ? ';' : ',';
-        console.log('Parsing extended postback format:', {
-          timestamp: new Date().toISOString(),
-          requestId: event.requestContext?.requestId || 'no-request-id',
-          separator,
-          pairs: event.body.split(separator).map(pair => pair.trim())
-        });
-        data = Object.fromEntries(
-          event.body.split(separator).map(pair => {
-            const [key, value] = pair.split('=').map(s => decodeURIComponent(s.trim()));
-            console.log('Parsed key-value pair:', {
-              timestamp: new Date().toISOString(),
-              key,
-              value
-            });
-            return [key, value];
-          })
-        ) as EPNResponse;
-        console.log('Successfully parsed extended format:', {
-          timestamp: new Date().toISOString(),
-          parsedData: JSON.stringify(data)
-        });
-      } catch (e) {
-        console.error('Failed to parse postback data:', {
-          timestamp: new Date().toISOString(),
-          requestId: event.requestContext?.requestId || 'no-request-id',
-          rawBody: event.body,
-          error: e instanceof Error ? e.message : 'Unknown error',
-          errorStack: e instanceof Error ? e.stack : undefined
-        });
-        throw new Error('Invalid postback data format');
+
+      if (!data.Success || !data.RespText) {
+        throw new Error('Invalid response format');
       }
+    } catch (e) {
+      console.error('Failed to parse postback data:', {
+        timestamp: new Date().toISOString(),
+        error: e instanceof Error ? e.message : 'Unknown error',
+        rawBody
+      });
+      throw new Error('Invalid postback data format');
     }
 
     // Validate RestrictKey if provided
@@ -112,10 +98,11 @@ export const handler: Handler = async (event) => {
     }
 
     // Extract transaction details
+    const success = data.Success === 'Y';
+    const respText = data.RespText || 'Unknown response';
+    
     const transactionId = data.XactID;
     const orderId = data['Postback.OrderID'] || data.OrderID;
-    const success = data.Success === 'Y';
-    const respText = data.RespText;
     const authCode = data.AuthCode;
     const avsResp = data.AVSResp;
     const cvv2Resp = data.CVV2Resp;
@@ -163,7 +150,7 @@ export const handler: Handler = async (event) => {
           success,
           respText,
           authCode,
-          avsResponse: avsResp,
+          avsResp,
           cvv2Response: cvv2Resp,
           transactionId,
           fullResponse: data
