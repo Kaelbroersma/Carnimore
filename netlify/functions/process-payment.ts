@@ -149,18 +149,21 @@ export const handler: Handler = async (event) => {
       TranType: 'Sale',
       IndustryType: 'E',
       Total: amount,
-      Address: billingAddress?.address || shippingAddress.address || '',
-      Zip: billingAddress?.zipCode || shippingAddress.zipCode || '',
+      // Use billing address if provided, otherwise use shipping address
+      Address: (billingAddress?.address || shippingAddress.address || '').trim(),
+      City: (billingAddress?.city || shippingAddress.city || '').trim(),
+      State: (billingAddress?.state || shippingAddress.state || '').trim(),
+      Zip: (billingAddress?.zipCode || shippingAddress.zipCode || '').trim(),
       CardNo: cardNumber.replace(/\s+/g, ''),
       ExpMonth: expiryMonth.padStart(2, '0'),
       ExpYear: expiryYear.slice(-2),
       CVV2Type: '1',
       CVV2: cvv,
+      PostbackID: orderId,
       'Postback.OrderID': orderId,
       'Postback.Description': `Order ${orderId}`,
       'Postback.Total': amount,
       'Postback.RestrictKey': EPN_RESTRICT_KEY,
-      PostbackID: orderId,
       COMBINE_PB_RESPONSE: '1',
       NOMAIL_CARDHOLDER: '1',
       NOMAIL_MERCHANT: '1'
@@ -183,6 +186,7 @@ export const handler: Handler = async (event) => {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
           'Accept': '*/*', 
+          'User-Agent': 'Carnimore/1.0'
         }
       });
 

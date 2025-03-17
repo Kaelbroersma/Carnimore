@@ -50,7 +50,7 @@ const CheckoutPage: React.FC = () => {
   const location = useLocation();
   const { items, clearCart } = useCartStore();
   const [orderId, setOrderId] = useState<string | null>(null);
-  const [paymentStatus, setPaymentStatus] = useState<'pending' | 'completed' | 'failed'>('pending');
+  const [paymentStatus, setPaymentStatus] = useState<'pending' | 'paid' | 'failed'>('pending');
   const [showProcessingModal, setShowProcessingModal] = useState(false);
   const [step, setStep] = useState<'details' | 'payment'>('details');
   const [loading, setLoading] = useState(false);
@@ -68,10 +68,10 @@ const CheckoutPage: React.FC = () => {
             if (!isSubscribed) return;
 
             setPaymentStatus(status as 'pending' | 'completed' | 'failed');
-            
+
             // Handle status changes
             switch (status) {
-              case 'completed':
+              case 'paid':
                 clearCart();
                 setTimeout(() => {
                   if (isSubscribed) {
