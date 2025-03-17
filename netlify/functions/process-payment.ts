@@ -25,6 +25,11 @@ export const handler: Handler = async (event) => {
     if (!event.body) {
       throw new Error('Missing request body');
     }
+    
+    console.log('Payment processing started:', {
+      timestamp: new Date().toISOString(),
+      requestId: event.requestContext?.requestId
+    });
 
     const paymentData = JSON.parse(event.body);
     const { 
@@ -38,6 +43,14 @@ export const handler: Handler = async (event) => {
       billingAddress,
       items
     } = paymentData;
+
+    console.log('Payment data received:', {
+      timestamp: new Date().toISOString(),
+      requestId: event.requestContext?.requestId,
+      orderId,
+      amount,
+      itemCount: items?.length
+    });
 
     // Get user ID from auth context if available
     const userId = event.headers.authorization?.split('Bearer ')[1] || null;
@@ -70,6 +83,12 @@ export const handler: Handler = async (event) => {
     }
 
     // Create initial order record in Supabase
+    console.log('Creating order record:', {
+      timestamp: new Date().toISOString(),
+      requestId: event.requestContext?.requestId,
+      orderId
+    });
+
     const { error: orderError } = await supabase
       .from('orders')
       .insert({
@@ -84,13 +103,34 @@ export const handler: Handler = async (event) => {
         shipping_method: 'standard',
         order_status: 'pending',
         created_at: new Date().toISOString()
-      });
+      })
+      .select()
+      .single();
 
     if (orderError) {
+      console.error('Failed to create order:', {
+        timestamp: new Date().toISOString(),
+        requestId: event.requestContext?.requestId,
+        error: orderError,
+        orderId
+      });
       throw new Error(`Failed to create order: ${orderError.message}`);
     }
 
+    console.log('Order created successfully:', {
+      timestamp: new Date().toISOString(),
+      requestId: event.requestContext?.requestId,
+      orderId
+    });
+
     // Create order items
+    console.log('Creating order items:', {
+      timestamp: new Date().toISOString(),
+      requestId: event.requestContext?.requestId,
+      orderId,
+      itemCount: items.length
+    });
+
     const { error: itemsError } = await supabase
       .from('order_items')
       .insert(items.map(item => ({
@@ -100,11 +140,25 @@ export const handler: Handler = async (event) => {
         price_at_time_of_order: item.price,
         total_price: item.price * item.quantity,
         options: item.options
-      })));
+      })))
+      .select();
 
     if (itemsError) {
+      console.error('Failed to create order items:', {
+        timestamp: new Date().toISOString(),
+        requestId: event.requestContext?.requestId,
+        error: itemsError,
+        orderId
+      });
       throw new Error(`Failed to create order items: ${itemsError.message}`);
     }
+
+    console.log('Order items created successfully:', {
+      timestamp: new Date().toISOString(),
+      requestId: event.requestContext?.requestId,
+      orderId
+    });
+
     // Build payment processor request
     const params = new URLSearchParams({
       ePNAccount: EPN_ACCOUNT,
@@ -120,12 +174,22 @@ export const handler: Handler = async (event) => {
       ExpYear: expiryYear,
       CVV2Type: '1',
       CVV2: cvv,
+      OrderID: orderId,
+      Description: `Order ${orderId}`,
+      PostbackID: orderId,
       'Postback.OrderID': orderId,
       'Postback.Description': `Order ${orderId}`,
       'Postback.Total': amount,
       'Postback.RestrictKey': EPN_RESTRICT_KEY,
       NOMAIL_CARDHOLDER: '1',
       NOMAIL_MERCHANT: '1'
+    });
+
+    console.log('Sending payment request to processor:', {
+      timestamp: new Date().toISOString(),
+      requestId: event.requestContext?.requestId,
+      orderId,
+      amount: formattedAmount
     });
 
     // Send request to payment processor
@@ -153,7 +217,13 @@ export const handler: Handler = async (event) => {
     });
 
     request.write(params.toString());
-    request.end();
+    request.end(() => {
+      console.log('Payment request sent to processor:', {
+        timestamp: new Date().toISOString(),
+        requestId: event.requestContext?.requestId,
+        orderId
+      });
+    });
 
     // Return success response immediately
     return {
@@ -167,7 +237,13 @@ export const handler: Handler = async (event) => {
     };
 
   } catch (error: any) {
-    console.error('Payment processing error:', error);
+    console.error('Payment processing error:', {
+      timestamp: new Date().toISOString(),
+      requestId: event.requestContext?.requestId,
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    });
 
     return {
       statusCode: 500,

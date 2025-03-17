@@ -38,29 +38,31 @@ export const paymentService = {
   async subscribeToOrder(orderId: string, callback: (status: string) => void) {
     try {
       // Wait a bit before starting to poll to allow order creation
-      await new Promise(resolve => setTimeout(resolve, 6000));
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       const checkOrderStatus = async () => {
         try {
           const result = await callNetlifyFunction('subscribe-to-order', { orderId });
           
-          if (result.error) {
-            console.error('Order status check failed:', result.error);
-            return;
+          // If order not found yet, keep polling
+          if (result.error?.message?.includes('order not found')) {
+            return; 
           }
 
-          if (result.data?.status) {
-            callback(result.data.status);
-            
-            // If payment is completed or failed, stop polling
-            if (['completed', 'failed'].includes(result.data.status)) {
-              clearInterval(interval);
-            }
+          // Call callback with status
+          callback(result.data?.status || 'pending');
+          
+          // If payment is completed or failed, stop polling
+          if (['completed', 'failed'].includes(result.data?.status)) {
+            clearInterval(interval);
           }
         } catch (error) {
           console.error('Failed to check order status:', error);
         }
       };
+
+      // Check immediately
+      await checkOrderStatus();
 
       // Poll every 5 seconds
       const interval = setInterval(checkOrderStatus, 5000);
@@ -68,14 +70,13 @@ export const paymentService = {
       // Return cleanup function
       return {
         unsubscribe: () => {
+          console.log('Unsubscribing from order updates');
           clearInterval(interval);
         }
       };
     } catch (error) {
       console.error('Failed to subscribe to order:', error);
-      return {
-        unsubscribe: () => {} // Provide empty cleanup function
-      };
+      throw error;
     }
   },
 

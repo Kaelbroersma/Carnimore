@@ -52,6 +52,11 @@ export const handler: Handler = async (event) => {
       try {
         // Try both semicolon and comma separators
         const separator = event.body.includes(';') ? ';' : ',';
+        console.log('Parsing extended postback format:', {
+          timestamp: new Date().toISOString(),
+          requestId: event.requestContext?.requestId,
+          separator
+        });
         data = Object.fromEntries(
           event.body.split(separator).map(pair => {
             const [key, value] = pair.split('=').map(s => decodeURIComponent(s.trim()));
@@ -105,7 +110,7 @@ export const handler: Handler = async (event) => {
     const { error: updateError } = await supabase
       .from('orders')
       .update({
-        payment_status: success ? 'completed' : 
+        payment_status: success ? 'paid' : 
                        data.Success === 'N' ? 'failed' : 'pending',
         payment_processor_id: transactionId,
         payment_processor_response: data
@@ -135,7 +140,7 @@ export const handler: Handler = async (event) => {
       headers,
       body: JSON.stringify({ 
         success: true,
-        status: success ? 'completed' : 
+        status: success ? 'paid' : 
                 data.Success === 'N' ? 'failed' : 'pending',
         message: respText || (success ? 'Payment approved' : 'Payment declined'),
         transactionId,
