@@ -6,6 +6,8 @@ import { useAuthStore } from '../store/authStore';
 export const paymentService = {
   async processPayment(data: PaymentData): Promise<Result<PaymentResult>> {
     const user = useAuthStore.getState().user;
+    let subscription: any;
+    let timeout: NodeJS.Timeout;
 
     try {
       // Validate required fields
@@ -78,26 +80,52 @@ export const paymentService = {
         headers,
         body: JSON.stringify(paymentRequest)
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Payment processing failed');
-      }
-
+      
+      // Parse initial response
       const result = await response.json();
 
-      if (result.error) {
-        throw new Error(result.error.message);
+      // Log any initial errors but don't throw yet
+      if (!response.ok || result.error) {
+        console.warn('Initial payment response indicates potential issue:', {
+          ok: response.ok,
+          error: result.error
+        });
       }
 
-      return {
-        data: {
-          orderId: data.orderId,
-          status: 'pending',
-          message: 'Payment processing initiated'
-        },
-        error: null
-      };
+      // Set up subscription to wait for final status
+      const finalStatus = await new Promise<string>((resolve, reject) => {
+        let timeout: NodeJS.Timeout;
+        
+        subscription = this.subscribeToOrder(data.orderId, (status) => {
+          if (status === 'paid' || status === 'failed') {
+            clearTimeout(timeout);
+            resolve(status);
+          }
+        });
+
+        // Set a timeout of 3 minutes
+        timeout = setTimeout(() => {
+          reject(new Error('Payment processing timeout'));
+        }, 180000);
+      });
+
+      if (finalStatus === 'failed') {
+        throw new Error('Payment was declined');
+      }
+      
+      // Now we can determine the final outcome
+      if (finalStatus === 'paid') {
+        return {
+          data: {
+            orderId: data.orderId,
+            status: 'paid',
+            message: 'Payment successful'
+          },
+          error: null
+        };
+      } else {
+        throw new Error('Payment was declined');
+      }
 
     } catch (error: any) {
       console.error('Payment error:', error);
@@ -108,28 +136,28 @@ export const paymentService = {
           details: error.stack
         }
       };
+    } finally {
+      // Cleanup subscription if it exists
+      if (subscription) {
+        subscription.unsubscribe();
+      }
     }
   },
 
   async subscribeToOrder(orderId: string, callback: (status: string) => void) {
     try {
-      // Wait a bit before starting to poll to allow order creation
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      // Initial delay to allow order creation
+      await new Promise(resolve => setTimeout(resolve, 3000));
 
       const checkOrderStatus = async () => {
         try {
           const result = await callNetlifyFunction('subscribe-to-order', { orderId });
           
-          // If order not found yet, keep polling
-          if (result.error?.message?.includes('order not found')) {
-            return; 
-          }
-
           // Call callback with status
           callback(result.data?.status || 'pending');
           
           // If payment is completed or failed, stop polling
-          if (['completed', 'failed'].includes(result.data?.status)) {
+          if (['paid', 'failed'].includes(result.data?.status)) {
             clearInterval(interval);
           }
         } catch (error) {
@@ -140,8 +168,8 @@ export const paymentService = {
       // Check immediately
       await checkOrderStatus();
 
-      // Poll every 5 seconds
-      const interval = setInterval(checkOrderStatus, 5000);
+      // Poll every 3 seconds
+      const interval = setInterval(checkOrderStatus, 3000);
 
       // Return cleanup function
       return {

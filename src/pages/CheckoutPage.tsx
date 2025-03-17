@@ -65,9 +65,9 @@ const CheckoutPage: React.FC = () => {
       const setupSubscription = async () => {
         try {
           subscription = await paymentService.subscribeToOrder(orderId, (status) => {
-            if (!isSubscribed) return;
+            if (!isSubscribed || !status) return;
 
-            setPaymentStatus(status as 'pending' | 'completed' | 'failed');
+            setPaymentStatus(status as 'pending' | 'paid' | 'failed');
 
             // Handle status changes
             switch (status) {
@@ -204,9 +204,8 @@ const CheckoutPage: React.FC = () => {
 
     } catch (error: any) {
       console.error('Payment error:', error);
-      setPaymentStatus('failed');
       setError(error.message);
-      setShowProcessingModal(false);
+      // Don't close modal or set status - let subscription handle it
     } finally {
       setLoading(false);
     }

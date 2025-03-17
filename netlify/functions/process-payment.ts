@@ -1,16 +1,25 @@
 import { Handler } from '@netlify/functions';
-import https from 'https';
 import { createClient } from '@supabase/supabase-js';
 
 // Environment variables
-const EPN_ACCOUNT = process.env.EPN_ACCOUNT_NUMBER;
-const EPN_RESTRICT_KEY = process.env.EPN_X_TRAN;
-const EPN_API_URL = 'https://www.eprocessingnetwork.com/cgi-bin/epn/secure/tdbe/transact.pl';
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const EPN_RESTRICT_KEY = process.env.EPN_X_TRAN;
 
 // Initialize Supabase client
 const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
+
+interface EPNResponse {
+  FullResponse: string;
+  RespText: string;
+  XactID?: string;
+  AuthCode?: string;
+  AVSResp?: string;
+  CVV2Resp?: string;
+  OrderID?: string;
+  'Postback.OrderID'?: string;
+  'Postback.RestrictKey'?: string;
+}
 
 export const handler: Handler = async (event) => {
   const headers = {
@@ -22,199 +31,212 @@ export const handler: Handler = async (event) => {
 
   try {
     if (!event.body) {
-      throw new Error('Missing request body');
+      throw new Error('Missing postback data');
+    }
+
+    // Log incoming postback
+    console.log('Payment postback received:', {
+      timestamp: new Date().toISOString(),
+      requestId: event.requestContext?.requestId || 'no-request-id',
+      method: event.httpMethod,
+      headers: JSON.stringify(event.headers),
+      rawBody: event.body,
+      isBase64Encoded: event.isBase64Encoded || false,
+      contentType: event.headers['content-type'] || event.headers['Content-Type']
+    });
+
+    // Parse postback data
+    let data: EPNResponse;
+    try {
+      // Parse the JSON response
+      const parsedData = JSON.parse(event.body);
+      
+      // If FullResponse is a string containing JSON, parse it again
+      if (typeof parsedData.FullResponse === 'string' && parsedData.FullResponse.startsWith('{')) {
+        parsedData.FullResponse = JSON.parse(parsedData.FullResponse);
+      }
+      
+      console.log('Parsed postback data:', {
+        timestamp: new Date().toISOString(),
+        parsedData: JSON.stringify(parsedData)
+      });
+      
+      data = parsedData;
+    } catch (e) {
+      // If JSON parse fails, try parsing as extended postback format
+      try {
+        // Try both semicolon and comma separators
+        const separator = event.body.includes(';') ? ';' : ',';
+        console.log('Parsing extended postback format:', {
+          timestamp: new Date().toISOString(),
+          requestId: event.requestContext?.requestId || 'no-request-id',
+          separator,
+          pairs: event.body.split(separator).map(pair => pair.trim())
+        });
+        data = Object.fromEntries(
+          event.body.split(separator).map(pair => {
+            const [key, value] = pair.split('=').map(s => decodeURIComponent(s.trim()));
+            console.log('Parsed key-value pair:', {
+              timestamp: new Date().toISOString(),
+              key,
+              value
+            });
+            return [key, value];
+          })
+        ) as EPNResponse;
+        console.log('Successfully parsed extended format:', {
+          timestamp: new Date().toISOString(),
+          parsedData: JSON.stringify(data)
+        });
+      } catch (e) {
+        console.error('Failed to parse postback data:', {
+          timestamp: new Date().toISOString(),
+          requestId: event.requestContext?.requestId || 'no-request-id',
+          rawBody: event.body,
+          error: e instanceof Error ? e.message : 'Unknown error',
+          errorStack: e instanceof Error ? e.stack : undefined
+        });
+        throw new Error('Invalid postback data format');
+      }
+    }
+
+    // Validate RestrictKey if provided
+    console.log('Validating RestrictKey:', {
+      timestamp: new Date().toISOString(),
+      hasRestrictKey: !!data['Postback.RestrictKey'],
+      restrictKeyMatch: data['Postback.RestrictKey'] === EPN_RESTRICT_KEY
+    });
+    
+    if (data['Postback.RestrictKey'] && data['Postback.RestrictKey'] !== EPN_RESTRICT_KEY) {
+      console.error('RestrictKey validation failed:', {
+        timestamp: new Date().toISOString(),
+        receivedKey: data['Postback.RestrictKey']
+      });
+      throw new Error('Invalid RestrictKey');
+    }
+
+    // Parse the FullResponse field to extract success status and message
+    let success = false;
+    let respText = 'Unknown response';
+    let fullResponseText = '';
+    
+    if (data.FullResponse) {
+      // Handle both string and parsed JSON formats
+      const fullResponseStr = typeof data.FullResponse === 'string' 
+        ? data.FullResponse 
+        : data.FullResponse.FullResponse || '';
+        
+      // Remove any surrounding quotes and get clean response
+      fullResponseText = fullResponseStr.replace(/^"/, '').replace(/"$/, '').split(',')[0];
+      
+      // First character indicates success (Y/N/U)
+      success = fullResponseText.charAt(0) === 'Y';
+      
+      // Rest of the text is the response message
+      respText = fullResponseText.substring(1).trim();
+      
+      console.log('Parsed FullResponse:', {
+        timestamp: new Date().toISOString(),
+        fullResponseText,
+        success,
+        respText
+      });
     }
     
-    console.log('Payment processing started:', {
-      timestamp: new Date().toISOString()
-    });
+    const transactionId = data.XactID;
+    const orderId = data['Postback.OrderID'] || data.OrderID;
+    const authCode = data.AuthCode;
+    const avsResp = data.AVSResp;
+    const cvv2Resp = data.CVV2Resp;
 
-    const paymentData = JSON.parse(event.body);
-    const { 
-      orderId, 
-      cardNumber, 
-      expiryMonth, 
-      expiryYear, 
-      cvv, 
-      amount, 
-      shippingAddress,
-      billingAddress,
-      items
-    } = paymentData;
-
-    console.log('Payment data received:', {
-      timestamp: new Date().toISOString(),
-      orderId,
-      amount,
-      itemCount: items?.length
-    });
-
-    // Get user ID from auth context if available
-    const userId = event.headers.authorization?.split('Bearer ')[1] || null;
-
-    // Format addresses for database
-    const formattedShippingAddress = [
-      shippingAddress.address,
-      shippingAddress.city,
-      shippingAddress.state,
-      shippingAddress.zipCode
-    ].filter(Boolean).join(', ');
-
-    const formattedBillingAddress = billingAddress ? [
-      billingAddress.address,
-      billingAddress.city,
-      billingAddress.state,
-      billingAddress.zipCode
-    ].filter(Boolean).join(', ') : formattedShippingAddress;
-
-    // Validate environment variables
-    if (!EPN_ACCOUNT || !EPN_RESTRICT_KEY) {
-      throw new Error('Missing required environment variables');
-    }
-
-    // Validate required fields
-    if (!cardNumber?.trim() || !expiryMonth?.trim() || !expiryYear?.trim() || 
-        !cvv?.trim() || !amount || !orderId || 
-        !shippingAddress?.address?.trim() || !shippingAddress?.zipCode?.trim()) {
+    if (!transactionId || !orderId) {
+      console.error('Missing required fields in postback:', {
+        timestamp: new Date().toISOString(),
+        requestId: event.requestContext?.requestId || 'no-request-id',
+        receivedData: JSON.stringify(data),
+        hasTransactionId: !!transactionId,
+        hasOrderId: !!orderId
+      });
       throw new Error('Missing required fields');
     }
 
-    // Create initial order record in Supabase
-    console.log('Creating order record:', { timestamp: new Date().toISOString(), orderId });
+    // Log extracted details
+    console.log('Extracted postback details:', {
+      timestamp: new Date().toISOString(),
+      requestId: event.requestContext?.requestId || 'no-request-id',
+      transactionId,
+      orderId,
+      success,
+      respText,
+      authCode,
+      avsResponse: avsResp,
+      cvv2Response: cvv2Resp,
+      fullResponse: JSON.stringify(data)
+    });
 
-    const { error: orderError } = await supabase
+    // Update order status in Supabase
+    console.log('Updating order status:', {
+      timestamp: new Date().toISOString(),
+      orderId,
+      newStatus: success ? 'paid' : data.Success === 'N' ? 'failed' : 'pending',
+      transactionId
+    });
+
+    const { error: updateError } = await supabase
       .from('orders')
-      .insert({
-        order_id: orderId,
-        user_id: userId, // Will be null for guest checkouts
-        payment_status: 'pending',
-        total_amount: amount,
-        shipping_address: formattedShippingAddress,
-        billing_address: formattedBillingAddress,
-        order_date: new Date().toISOString(),
-        payment_method: 'credit_card',
-        shipping_method: 'standard',
-        order_status: 'pending',
-        created_at: new Date().toISOString()
-      })
-      .select()
-      .single();
-
-    if (orderError) {
-      console.error('Failed to create order:', {
-        timestamp: new Date().toISOString(),
-        error: orderError,
-        orderId
-      });
-      throw new Error(`Failed to create order: ${orderError.message}`);
-    }
-
-    console.log('Order created successfully:', { timestamp: new Date().toISOString(), orderId });
-
-    // Create order items
-    console.log('Creating order items:', {
-      timestamp: new Date().toISOString(),
-      orderId,
-      itemCount: items.length
-    });
-
-    const { error: itemsError } = await supabase
-      .from('order_items')
-      .insert(items.map(item => ({
-        order_id: orderId,
-        product_id: item.id,
-        quantity: item.quantity,
-        price_at_time_of_order: item.price,
-        total_price: item.price * item.quantity,
-        options: item.options
-      })))
-      .select();
-
-    if (itemsError) {
-      console.error('Failed to create order items:', {
-        timestamp: new Date().toISOString(),
-        error: itemsError,
-        orderId
-      });
-      throw new Error(`Failed to create order items: ${itemsError.message}`);
-    }
-
-    console.log('Order items created successfully:', { timestamp: new Date().toISOString(), orderId });
-
-    // Build payment processor request payload
-    const params = new URLSearchParams({
-      ePNAccount: EPN_ACCOUNT,
-      RestrictKey: EPN_RESTRICT_KEY,
-      RequestType: 'transaction',
-      TranType: 'Sale',
-      IndustryType: 'E',
-      Total: amount,
-      // Use billing address if provided, otherwise use shipping address
-      Address: (billingAddress?.address || shippingAddress.address || '').trim(),
-      City: (billingAddress?.city || shippingAddress.city || '').trim(),
-      State: (billingAddress?.state || shippingAddress.state || '').trim(),
-      Zip: (billingAddress?.zipCode || shippingAddress.zipCode || '').trim(),
-      CardNo: cardNumber.replace(/\s+/g, ''),
-      ExpMonth: expiryMonth.padStart(2, '0'),
-      ExpYear: expiryYear.slice(-2),
-      CVV2Type: '1',
-      CVV2: cvv,
-      PostbackID: orderId,
-      'Postback.OrderID': orderId,
-      'Postback.Description': `Order ${orderId}`,
-      'Postback.Total': amount,
-      'Postback.RestrictKey': EPN_RESTRICT_KEY,
-      COMBINE_PB_RESPONSE: '1',
-      NOMAIL_CARDHOLDER: '1',
-      NOMAIL_MERCHANT: '1'
-    });
-
-    console.log('Sending payment request to processor:', {
-      timestamp: new Date().toISOString(),
-      orderId,
-      amount
-    });
-
-    // Create HTTPS request with proper TLS settings
-    const makeRequest = async () => {
-      const response = await fetch(EPN_API_URL, {
-        method: 'POST',
-        agent: new https.Agent({
-          minVersion: 'TLSv1.2'
-        }),
-        body: params.toString(),
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': '*/*', 
-          'User-Agent': 'Carnimore/1.0'
+      .update({
+        payment_status: success ? 'paid' : 
+                       fullResponseText.charAt(0) === 'N' ? 'failed' : 'pending',
+        payment_processor_id: transactionId,
+        payment_processor_response: {
+          success,
+          respText,
+          fullResponseText,
+          authCode,
+          avsResponse: avsResp,
+          cvv2Response: cvv2Resp,
+          transactionId,
+          rawResponse: data
         }
-      });
+      })
+      .eq('order_id', orderId);
 
-      console.log('Payment request sent to processor:', { 
+    if (updateError) {
+      console.error('Failed to update order:', {
         timestamp: new Date().toISOString(),
-        orderId 
+        requestId: event.requestContext?.requestId,
+        error: updateError,
+        orderId
       });
+      throw new Error('Failed to update order status');
+    }
 
-      return response;
-    };
+    console.log('Payment postback processed successfully:', {
+      timestamp: new Date().toISOString(),
+      requestId: event.requestContext?.requestId,
+      transactionId,
+      orderId,
+      success
+    });
 
-    // Send the request
-    await makeRequest();
-
-    // Return success response immediately
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({
+      body: JSON.stringify({ 
         success: true,
-        orderId,
-        message: 'Payment processing initiated'
+        status: success ? 'paid' : 
+                fullResponseText.charAt(0) === 'N' ? 'failed' : 'pending',
+        message: respText || (success ? 'Payment approved' : 'Payment declined'),
+        transactionId,
+        authCode,
+        orderId
       })
     };
 
   } catch (error: any) {
-    console.error('Payment processing error:', {
+    console.error('Payment postback error:', {
       timestamp: new Date().toISOString(),
+      requestId: event.requestContext?.requestId,
       name: error.name,
       message: error.message,
       stack: error.stack
@@ -225,7 +247,8 @@ export const handler: Handler = async (event) => {
       headers,
       body: JSON.stringify({
         success: false,
-        message: error.message || 'Failed to process payment'
+        message: 'Failed to process postback',
+        error: error.message
       })
     };
   }
