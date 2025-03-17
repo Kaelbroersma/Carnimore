@@ -37,13 +37,16 @@ const formatAmount = (amount: number): string => {
 export const paymentService = {
   async subscribeToOrder(orderId: string, callback: (status: string) => void) {
     try {
-      // Subscribe to order status changes via Netlify function
+      // Wait a bit before starting to poll to allow order creation
+      await new Promise(resolve => setTimeout(resolve, 6000));
+
       const checkOrderStatus = async () => {
         try {
           const result = await callNetlifyFunction('subscribe-to-order', { orderId });
           
           if (result.error) {
-            throw new Error(result.error.message);
+            console.error('Order status check failed:', result.error);
+            return;
           }
 
           if (result.data?.status) {
@@ -59,11 +62,8 @@ export const paymentService = {
         }
       };
 
-      // Check immediately
-      await checkOrderStatus();
-
-      // Then poll every 2 seconds
-      const interval = setInterval(checkOrderStatus, 2000);
+      // Poll every 5 seconds
+      const interval = setInterval(checkOrderStatus, 5000);
 
       // Return cleanup function
       return {
@@ -82,7 +82,9 @@ export const paymentService = {
   async processPayment(data: PaymentData): Promise<Result<PaymentResult>> {
     try {
       // Validate required fields
-      if (!data.cardNumber || !data.expiryMonth || !data.expiryYear || !data.cvv || !data.amount || !data.orderId || !data.shippingAddress) {
+      if (!data.cardNumber?.trim() || !data.expiryMonth?.trim() || !data.expiryYear?.trim() || 
+          !data.cvv?.trim() || !data.amount || !data.orderId || 
+          !data.shippingAddress?.address?.trim() || !data.shippingAddress?.zipCode?.trim()) {
         throw new Error('All payment fields are required');
       }
 

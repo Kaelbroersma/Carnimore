@@ -142,12 +142,22 @@ const CheckoutPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    setLoading(true);
+    setError(null);
+    
     // Generate new order ID
     const newOrderId = crypto.randomUUID();
     setOrderId(newOrderId);
     setShowProcessingModal(true);
 
     try {
+      // Validate required fields
+      if (!formData.cardNumber?.trim() || !formData.expiryMonth?.trim() || 
+          !formData.expiryYear?.trim() || !formData.cvv?.trim()) {
+        throw new Error('Please fill in all payment fields');
+      }
+
+      // Process payment
       const result = await paymentService.processPayment({
         cardNumber: formData.cardNumber,
         expiryMonth: formData.expiryMonth,
@@ -166,7 +176,13 @@ const CheckoutPage: React.FC = () => {
           state: billingInfo.state,
           zipCode: billingInfo.zipCode
         },
-        orderId: newOrderId
+        orderId: newOrderId,
+        items: items.map(item => ({
+          id: item.id,
+          quantity: item.quantity,
+          price: item.price,
+          options: item.options || {}
+        }))
       });
 
       if (result.error) {
@@ -177,6 +193,9 @@ const CheckoutPage: React.FC = () => {
       console.error('Payment error:', error);
       setPaymentStatus('failed');
       setError(error.message);
+      setShowProcessingModal(false);
+    } finally {
+      setLoading(false);
     }
   };
 

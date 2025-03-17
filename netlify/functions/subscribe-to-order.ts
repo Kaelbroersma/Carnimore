@@ -36,11 +36,23 @@ export const handler: Handler = async (event) => {
     // Get initial order status
     const { data: order, error: orderError } = await supabase
       .from('orders')
-      .select('payment_status')
+      .select('payment_status, order_id')
       .eq('order_id', orderId)
       .single();
     
     if (orderError) {
+      // If order not found, return pending status
+      if (orderError.code === 'PGRST116') {
+        return {
+          statusCode: 200,
+          headers,
+          body: JSON.stringify({
+            success: true,
+            status: 'pending',
+            orderId
+          })
+        };
+      }
       throw orderError;
     }
 

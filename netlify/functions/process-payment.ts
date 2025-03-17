@@ -36,6 +36,7 @@ export const handler: Handler = async (event) => {
       amount, 
       shippingAddress,
       billingAddress,
+      items
     } = paymentData;
 
     // Get user ID from auth context if available
@@ -61,6 +62,13 @@ export const handler: Handler = async (event) => {
       throw new Error('Missing required environment variables');
     }
 
+    // Validate required fields
+    if (!cardNumber?.trim() || !expiryMonth?.trim() || !expiryYear?.trim() || 
+        !cvv?.trim() || !amount || !orderId || 
+        !shippingAddress?.address?.trim() || !shippingAddress?.zipCode?.trim()) {
+      throw new Error('Missing required fields');
+    }
+
     // Create initial order record in Supabase
     const { error: orderError } = await supabase
       .from('orders')
@@ -74,13 +82,29 @@ export const handler: Handler = async (event) => {
         order_date: new Date().toISOString(),
         payment_method: 'credit_card',
         shipping_method: 'standard',
-        order_status: 'pending'
+        order_status: 'pending',
+        created_at: new Date().toISOString()
       });
 
     if (orderError) {
       throw new Error(`Failed to create order: ${orderError.message}`);
     }
 
+    // Create order items
+    const { error: itemsError } = await supabase
+      .from('order_items')
+      .insert(items.map(item => ({
+        order_id: orderId,
+        product_id: item.id,
+        quantity: item.quantity,
+        price_at_time_of_order: item.price,
+        total_price: item.price * item.quantity,
+        options: item.options
+      })));
+
+    if (itemsError) {
+      throw new Error(`Failed to create order items: ${itemsError.message}`);
+    }
     // Build payment processor request
     const params = new URLSearchParams({
       ePNAccount: EPN_ACCOUNT,

@@ -13,7 +13,13 @@ export interface PaymentData {
     amount: number;
     shippingAddress: Address;
     billingAddress?: Address | null;
-    orderId: string; // Make orderId required
+    orderId: string;
+    items: Array<{
+      id: string;
+      quantity: number;
+      price: number;
+      options: Record<string, any>;
+    }>;
   }
   
   export interface PaymentResult {
