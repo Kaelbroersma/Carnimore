@@ -60,7 +60,7 @@ export const paymentService = {
   async processPayment(data: PaymentData): Promise<Result<PaymentResult>> {
     try {
       // Validate required fields
-      if (!data.cardNumber || !data.expiryMonth || !data.expiryYear || !data.cvv || !data.amount || !data.orderId || !data.address || !data.zip) {
+      if (!data.cardNumber || !data.expiryMonth || !data.expiryYear || !data.cvv || !data.amount || !data.orderId || !data.shippingAddress) {
         throw new Error('All payment fields are required');
       }
 
@@ -86,9 +86,9 @@ export const paymentService = {
       // Format amount
       const formattedAmount = formatAmount(data.amount);
       
-      // Validate address and zip
-      if (!data.address.trim() || !data.zip.trim()) {
-        throw new Error('Billing address and ZIP code are required');
+      // Validate shipping address
+      if (!data.shippingAddress.address.trim() || !data.shippingAddress.zipCode.trim()) {
+        throw new Error('Shipping address and ZIP code are required');
       }
 
       // Send payment request
@@ -98,9 +98,9 @@ export const paymentService = {
         expiryYear: data.expiryYear.slice(-2),
         cvv: data.cvv,
         amount: formattedAmount,
+        shippingAddress: data.shippingAddress,
+        billingAddress: data.billingAddress,
         orderId: data.orderId,
-        address: data.address,
-        zip: data.zip
       });
 
       if (result.error) {

@@ -187,6 +187,11 @@ const CheckoutPage: React.FC = () => {
         orderId={orderId || ''}
         status={paymentStatus}
         message={error}
+        onRetry={() => {
+          setShowProcessingModal(false);
+          setError(null);
+          setPaymentStatus('pending');
+        }}
       />
 
       <div className="container mx-auto px-4">

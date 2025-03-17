@@ -36,8 +36,10 @@ export const handler: Handler = async (event) => {
       amount, 
       shippingAddress,
       billingAddress,
-      userId 
     } = paymentData;
+
+    // Get user ID from auth context if available
+    const userId = event.headers.authorization?.split('Bearer ')[1] || null;
 
     // Format addresses for database
     const formattedShippingAddress = [
@@ -64,7 +66,7 @@ export const handler: Handler = async (event) => {
       .from('orders')
       .insert({
         order_id: orderId,
-        user_id: userId,
+        user_id: userId, // Will be null for guest checkouts
         payment_status: 'pending',
         total_amount: amount,
         shipping_address: formattedShippingAddress,
@@ -108,7 +110,8 @@ export const handler: Handler = async (event) => {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Accept': '*/*',
-        'User-Agent': 'Carnimore/1.0'
+        'User-Agent': 'Carnimore/1.0',
+        'X-EPN-Account': EPN_ACCOUNT
       },
       // Force TLS 1.2
       minVersion: tls.constants.TLSv1_2_VERSION,

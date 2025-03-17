@@ -7,13 +7,15 @@ interface PaymentProcessingModalProps {
   orderId: string;
   status: 'pending' | 'completed' | 'failed';
   message?: string;
+  onRetry?: () => void;
 }
 
 const PaymentProcessingModal: React.FC<PaymentProcessingModalProps> = ({
   isOpen,
   orderId,
   status,
-  message
+  message,
+  onRetry
 }) => {
   return (
     <AnimatePresence>
@@ -65,7 +67,14 @@ const PaymentProcessingModal: React.FC<PaymentProcessingModalProps> = ({
                   <div className="space-y-2">
                     <p className="text-gray-400">{message || 'There was an error processing your payment. Please try again.'}</p>
                     <p className="text-sm text-gray-400">Order ID: {orderId}</p>
-                    <p className="text-sm text-gray-400">Redirecting...</p>
+                    {onRetry && (
+                      <button
+                        onClick={onRetry}
+                        className="mt-4 bg-tan text-black hover:bg-opacity-90 font-medium transition-all duration-300 px-6 py-2 text-sm rounded-sm"
+                      >
+                        Try Again
+                      </button>
+                    )}
                   </div>
                 </>
               )}
