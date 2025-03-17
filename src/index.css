@@ -1,0 +1,150 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+/* Reset default margins and ensure proper viewport sizing */
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+body {
+  @apply bg-primary text-white;
+  font-family: 'Inter', sans-serif;
+  position: relative;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Montserrat', sans-serif;
+}
+
+/* Gradient backgrounds */
+.gradient-brand {
+  @apply bg-primary;
+  background: linear-gradient(to bottom, #0A0A0A 80%, #222222 100%);
+}
+
+.gradient-what-we-do {
+  @apply bg-medium-gray;
+}
+
+.gradient-why-choose {
+  @apply bg-primary;
+  background: linear-gradient(to bottom, #222222 0%, #0A0A0A 20%);
+}
+
+.gradient-testimonials {
+  @apply bg-primary;
+  background: linear-gradient(to bottom, #0A0A0A 0%, #131A1F 100%);
+}
+
+.gradient-featured {
+  @apply bg-primary;
+  background: linear-gradient(to bottom, #131A1F 0%, #0A0A0A 100%);
+}
+
+.luxury-gradient {
+  background: linear-gradient(135deg, #0A0A0A 0%, #131A1F 100%);
+}
+
+.tan-gradient {
+  background: linear-gradient(135deg, #BEA987 0%, #8C7A5B 100%);
+}
+
+.crimson-gradient {
+  background: linear-gradient(135deg, #DC143C 0%, #A01030 100%);
+}
+
+.angular-border {
+  clip-path: polygon(0 0, 100% 0, 100% 85%, 95% 100%, 0 100%);
+}
+
+.angular-border-reverse {
+  clip-path: polygon(0 0, 95% 0, 100% 15%, 100% 100%, 0 100%);
+}
+
+.angular-button {
+  clip-path: polygon(0 0, 100% 0, 95% 100%, 0 100%);
+  transition: all 0.3s ease;
+}
+
+.angular-button:hover {
+  transform: translateY(-2px);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #121212;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #BEA987;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #8C7A5B;
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Three.js canvas */
+.canvas-container {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+/* Aspect ratio utilities */
+.aspect-w-3 {
+  position: relative;
+  padding-bottom: calc(var(--tw-aspect-h) / var(--tw-aspect-w) * 100%);
+}
+
+.aspect-h-2 {
+  --tw-aspect-h: 2;
+}
+
+.aspect-w-3 {
+  --tw-aspect-w: 3;
+}
+
+.aspect-w-3 > * {
+  position: absolute;
+  height: 100%;
+  width: 100%;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+/* Carbon fiber pattern mixin */
+.carbon-fiber-pattern {
+  position: relative;
+}
+
+.carbon-fiber-pattern::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url('/img/real-carbon-fibre.png');
+  background-size: 200px;
+  background-repeat: repeat;
+  opacity: 0.8;
+  mix-blend-mode: overlay;
+}
