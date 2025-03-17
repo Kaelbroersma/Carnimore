@@ -1,11 +1,49 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Shield, Truck } from 'lucide-react';
 import { useCartStore } from '../store/cartStore';
+import type { CartItem } from '../store/cartStore';
 import { paymentService } from '../services/paymentService';
 import PaymentProcessingModal from '../components/PaymentProcessingModal';
 import Button from '../components/Button';
 import type { PaymentData } from '../types/payment';
+
+const formatOptionLabel = (key: string, value: any): string => {
+  switch (key) {
+    case 'caliber':
+      return `Caliber: ${value}`;
+    case 'colors':
+      return `Colors: ${value}`;
+    case 'longAction':
+      return 'Long Action';
+    case 'deluxeVersion':
+      return 'Deluxe Version';
+    case 'isDirty':
+      return 'Extra Cleaning Required';
+    case 'size':
+      return `Size: ${value}`;
+    case 'color':
+      return `Color: ${value}`;
+    default:
+      return '';
+  }
+};
+
+const renderItemOptions = (item: CartItem) => {
+  if (!item.options) return null;
+  
+  return Object.entries(item.options).map(([key, value]) => {
+    if (!value) return null;
+    const label = formatOptionLabel(key, value);
+    if (!label) return null;
+    
+    return (
+      <p key={key} className="text-sm text-gray-400">
+        {label}
+      </p>
+    );
+  });
+};
 
 const CheckoutPage: React.FC = () => {
   const navigate = useNavigate();
@@ -507,6 +545,7 @@ const CheckoutPage: React.FC = () => {
                         <div className="ml-4 flex-1">
                           <h3 className="font-medium">{item.name}</h3>
                           <p className="text-gray-400">Qty: {item.quantity}</p>
+                          {renderItemOptions(item)}
                         </div>
                         <p className="text-tan">${(item.price * item.quantity).toFixed(2)}</p>
                       </div>
@@ -526,6 +565,17 @@ const CheckoutPage: React.FC = () => {
                   <div className="flex justify-between font-bold text-lg pt-2 border-t border-gunmetal-light">
                     <span>Total</span>
                     <span className="text-tan">${total.toFixed(2)}</span>
+                  </div>
+                </div>
+
+                <div className="mt-6 space-y-4 text-sm text-gray-400">
+                  <div className="flex items-center">
+                    <Shield size={16} className="mr-2 text-tan" />
+                    <span>Secure checkout</span>
+                  </div>
+                  <div className="flex items-center">
+                    <Truck size={16} className="mr-2 text-tan" />
+                    <span>Free shipping on all orders</span>
                   </div>
                 </div>
               </div>
