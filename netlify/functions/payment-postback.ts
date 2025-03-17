@@ -10,7 +10,7 @@ const EPN_RESTRICT_KEY = process.env.EPN_X_TRAN;
 const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
 
 interface EPNResponse {
-  FullResponse: string;
+  Success: 'Y' | 'N' | 'U';
   RespText: string;
   XactID?: string;
   AuthCode?: string;
@@ -112,14 +112,10 @@ export const handler: Handler = async (event) => {
     }
 
     // Extract transaction details
-    const fullResponse = data.FullResponse?.replace(/^"/, '').replace(/"$/, '') || '';
-    // Extract success status from first character of FullResponse
-    const success = fullResponse.charAt(0) === 'Y';
-    // Extract response message from remaining text
-    const respText = fullResponse.substring(1) || 'Unknown response';
-    
     const transactionId = data.XactID;
     const orderId = data['Postback.OrderID'] || data.OrderID;
+    const success = data.Success === 'Y';
+    const respText = data.RespText;
     const authCode = data.AuthCode;
     const avsResp = data.AVSResp;
     const cvv2Resp = data.CVV2Resp;
@@ -161,12 +157,11 @@ export const handler: Handler = async (event) => {
       .from('orders')
       .update({
         payment_status: success ? 'paid' : 
-                       fullResponse.charAt(0) === 'N' ? 'failed' : 'pending',
+                       data.Success === 'N' ? 'failed' : 'pending',
         payment_processor_id: transactionId,
         payment_processor_response: {
           success,
           respText,
-          fullResponse,
           authCode,
           avsResponse: avsResp,
           cvv2Response: cvv2Resp,
@@ -200,7 +195,7 @@ export const handler: Handler = async (event) => {
       body: JSON.stringify({ 
         success: true,
         status: success ? 'paid' : 
-                fullResponse.charAt(0) === 'N' ? 'failed' : 'pending',
+                data.Success === 'N' ? 'failed' : 'pending',
         message: respText || (success ? 'Payment approved' : 'Payment declined'),
         transactionId,
         authCode,
