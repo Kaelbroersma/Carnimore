@@ -163,6 +163,7 @@ export const handler: Handler = async (event) => {
       'Postback.Description': `Order ${orderId}`,
       'Postback.Total': amount,
       'Postback.RestrictKey': EPN_RESTRICT_KEY,
+      PostbackID: orderId,
       COMBINE_PB_RESPONSE: '1',
       NOMAIL_CARDHOLDER: '1',
       NOMAIL_MERCHANT: '1'
