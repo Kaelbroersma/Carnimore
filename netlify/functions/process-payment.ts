@@ -1,6 +1,7 @@
 import { Handler } from '@netlify/functions';
 import https from 'node:https';
 import tls from 'node:tls';
+import { promisify } from 'node:util';
 import { createClient } from '@supabase/supabase-js';
 
 // Environment variables
@@ -27,8 +28,7 @@ export const handler: Handler = async (event) => {
     }
     
     console.log('Payment processing started:', {
-      timestamp: new Date().toISOString(),
-      requestId: event.requestContext?.requestId
+      timestamp: new Date().toISOString()
     });
 
     const paymentData = JSON.parse(event.body);
@@ -46,7 +46,6 @@ export const handler: Handler = async (event) => {
 
     console.log('Payment data received:', {
       timestamp: new Date().toISOString(),
-      requestId: event.requestContext?.requestId,
       orderId,
       amount,
       itemCount: items?.length
@@ -83,11 +82,7 @@ export const handler: Handler = async (event) => {
     }
 
     // Create initial order record in Supabase
-    console.log('Creating order record:', {
-      timestamp: new Date().toISOString(),
-      requestId: event.requestContext?.requestId,
-      orderId
-    });
+    console.log('Creating order record:', { timestamp: new Date().toISOString(), orderId });
 
     const { error: orderError } = await supabase
       .from('orders')
@@ -110,23 +105,17 @@ export const handler: Handler = async (event) => {
     if (orderError) {
       console.error('Failed to create order:', {
         timestamp: new Date().toISOString(),
-        requestId: event.requestContext?.requestId,
         error: orderError,
         orderId
       });
       throw new Error(`Failed to create order: ${orderError.message}`);
     }
 
-    console.log('Order created successfully:', {
-      timestamp: new Date().toISOString(),
-      requestId: event.requestContext?.requestId,
-      orderId
-    });
+    console.log('Order created successfully:', { timestamp: new Date().toISOString(), orderId });
 
     // Create order items
     console.log('Creating order items:', {
       timestamp: new Date().toISOString(),
-      requestId: event.requestContext?.requestId,
       orderId,
       itemCount: items.length
     });
@@ -146,27 +135,21 @@ export const handler: Handler = async (event) => {
     if (itemsError) {
       console.error('Failed to create order items:', {
         timestamp: new Date().toISOString(),
-        requestId: event.requestContext?.requestId,
         error: itemsError,
         orderId
       });
       throw new Error(`Failed to create order items: ${itemsError.message}`);
     }
 
-    console.log('Order items created successfully:', {
-      timestamp: new Date().toISOString(),
-      requestId: event.requestContext?.requestId,
-      orderId
-    });
+    console.log('Order items created successfully:', { timestamp: new Date().toISOString(), orderId });
 
-    // Build payment processor request
-    const params = new URLSearchParams({
+    // Build payment processor request payload
+    const paymentPayload = {
       ePNAccount: EPN_ACCOUNT,
       RestrictKey: EPN_RESTRICT_KEY,
       RequestType: 'transaction',
       TranType: 'Sale',
-      IndustryType: 'E',
-      Total: amount,
+      Total: amount.toFixed(2),
       Address: billingAddress?.address || shippingAddress.address,
       Zip: billingAddress?.zipCode || shippingAddress.zipCode,
       CardNo: cardNumber,
@@ -174,56 +157,65 @@ export const handler: Handler = async (event) => {
       ExpYear: expiryYear,
       CVV2Type: '1',
       CVV2: cvv,
-      OrderID: orderId,
-      Description: `Order ${orderId}`,
-      PostbackID: orderId,
+      'Postback.URL': `carnimore.netlify.app/.netlify/functions/payment-postback`,
       'Postback.OrderID': orderId,
-      'Postback.Description': `Order ${orderId}`,
-      'Postback.Total': amount,
-      'Postback.RestrictKey': EPN_RESTRICT_KEY,
-      NOMAIL_CARDHOLDER: '1',
-      NOMAIL_MERCHANT: '1'
-    });
+      'Postback.Total': amount.toFixed(2),
+      'Postback.RestrictKey': EPN_RESTRICT_KEY
+    };
 
     console.log('Sending payment request to processor:', {
       timestamp: new Date().toISOString(),
-      requestId: event.requestContext?.requestId,
       orderId,
-      amount: formattedAmount
+      amount: amount.toFixed(2)
     });
 
-    // Send request to payment processor
-    const request = https.request(EPN_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': '*/*',
-        'User-Agent': 'Carnimore/1.0',
-        'X-EPN-Account': EPN_ACCOUNT
-      },
-      // Force TLS 1.2
-      minVersion: tls.constants.TLSv1_2_VERSION,
-      maxVersion: tls.constants.TLSv1_2_VERSION,
-      // Secure cipher suites
-      ciphers: [
-        'ECDHE-RSA-AES256-GCM-SHA384',
-        'ECDHE-RSA-AES128-GCM-SHA256'
-      ].join(':'),
-      // Additional security options
-      secureOptions: {
-        rejectUnauthorized: true,
-        honorCipherOrder: true
-      }
-    });
-
-    request.write(params.toString());
-    request.end(() => {
-      console.log('Payment request sent to processor:', {
-        timestamp: new Date().toISOString(),
-        requestId: event.requestContext?.requestId,
-        orderId
+    // Create HTTPS request with proper TLS settings
+    const makeRequest = () => new Promise((resolve, reject) => {
+      const request = https.request(EPN_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'User-Agent': 'Carnimore/1.0',
+          'X-EPN-Account': EPN_ACCOUNT
+        },
+        // Force TLS 1.2
+        minVersion: tls.constants.TLSv1_2_VERSION,
+        maxVersion: tls.constants.TLSv1_2_VERSION,
+        // Secure cipher suites
+        ciphers: [
+          'ECDHE-RSA-AES256-GCM-SHA384',
+          'ECDHE-RSA-AES128-GCM-SHA256'
+        ].join(':'),
+        // Additional security options
+        secureOptions: {
+          rejectUnauthorized: true,
+          honorCipherOrder: true
+        }
       });
+
+      request.on('error', (error) => {
+        console.error('Payment processor request error:', {
+          timestamp: new Date().toISOString(),
+          error: error.message,
+          orderId
+        });
+        reject(error);
+      });
+
+      request.write(JSON.stringify(paymentPayload));
+      request.end();
+
+      console.log('Payment request sent to processor:', { 
+        timestamp: new Date().toISOString(),
+        orderId 
+      });
+
+      resolve(true);
     });
+
+    // Send the request
+    await makeRequest();
 
     // Return success response immediately
     return {
@@ -239,7 +231,6 @@ export const handler: Handler = async (event) => {
   } catch (error: any) {
     console.error('Payment processing error:', {
       timestamp: new Date().toISOString(),
-      requestId: event.requestContext?.requestId,
       name: error.name,
       message: error.message,
       stack: error.stack

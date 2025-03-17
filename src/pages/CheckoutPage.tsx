@@ -142,12 +142,12 @@ const CheckoutPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    setLoading(true);
-    setError(null);
-    
     // Generate new order ID
     const newOrderId = crypto.randomUUID();
     setOrderId(newOrderId);
+
+    setLoading(true);
+    setError(null);
     setShowProcessingModal(true);
 
     try {
@@ -158,7 +158,7 @@ const CheckoutPage: React.FC = () => {
       }
 
       // Process payment
-      const result = await paymentService.processPayment({
+      const paymentData = {
         cardNumber: formData.cardNumber,
         expiryMonth: formData.expiryMonth,
         expiryYear: formData.expiryYear,
@@ -183,11 +183,24 @@ const CheckoutPage: React.FC = () => {
           price: item.price,
           options: item.options || {}
         }))
+      };
+
+      console.log('Submitting payment:', {
+        orderId: newOrderId,
+        amount: total,
+        itemCount: items.length
       });
+
+      const result = await paymentService.processPayment(paymentData);
 
       if (result.error) {
         throw new Error(result.error.message);
       }
+
+      console.log('Payment submitted successfully:', {
+        orderId: newOrderId,
+        status: 'pending'
+      });
 
     } catch (error: any) {
       console.error('Payment error:', error);
