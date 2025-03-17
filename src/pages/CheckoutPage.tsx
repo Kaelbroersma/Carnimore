@@ -1,13 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { motion } from 'framer-motion';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { CreditCard, Truck, Shield, ArrowLeft, AlertCircle } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 import { useCartStore } from '../store/cartStore';
-import { useAuthStore } from '../store/authStore';
-import PaymentProcessingModal from '../components/PaymentProcessingModal';
 import { paymentService } from '../services/paymentService';
-import type { PaymentData } from '../types/payment';
+import PaymentProcessingModal from '../components/PaymentProcessingModal';
 import Button from '../components/Button';
+import type { PaymentData } from '../types/payment';
 
 const CheckoutPage: React.FC = () => {
   const navigate = useNavigate();
@@ -19,27 +17,31 @@ const CheckoutPage: React.FC = () => {
   const [step, setStep] = useState<'details' | 'payment'>('details');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<any>(null);
 
   useEffect(() => {
-    // Cleanup subscription on unmount
+    // Subscribe to order status updates
     let subscription: any;
     
     if (orderId) {
       subscription = paymentService.subscribeToOrder(orderId, (status) => {
+        setPaymentStatus(status as 'pending' | 'completed' | 'failed');
+        
+        // Handle status changes
         switch (status) {
           case 'completed':
-            setPaymentStatus('completed');
-            // Redirect to success page after delay
+            clearCart();
             setTimeout(() => {
-              navigate('/payment/success', { state: { orderId } });
+              navigate('/payment/success', { 
+                state: { orderId } 
+              });
             }, 2000);
             break;
+            
           case 'failed':
-            setPaymentStatus('failed');
-            // Redirect to error page after delay
             setTimeout(() => {
-              navigate('/payment/error', { state: { orderId } });
+              navigate('/payment/error', { 
+                state: { orderId } 
+              });
             }, 2000);
             break;
         }
@@ -51,7 +53,7 @@ const CheckoutPage: React.FC = () => {
         subscription.unsubscribe();
       }
     };
-  }, [orderId]);
+  }, [orderId, navigate, clearCart]);
 
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const tax = subtotal * 0.08; // 8% tax
@@ -67,11 +69,10 @@ const CheckoutPage: React.FC = () => {
     zipCode: '',
     phone: '',
     cardNumber: '',
-    expiryDate: '',
-    cvv: '',
-    nameOnCard: '',
     expiryMonth: '',
-    expiryYear: ''
+    expiryYear: '',
+    cvv: '',
+    nameOnCard: ''
   });
 
   const [billingInfo, setBillingInfo] = useState({
@@ -84,60 +85,10 @@ const CheckoutPage: React.FC = () => {
     sameAsShipping: true
   });
 
-  const formatOptionLabel = (key: string, value: any): string => {
-    switch (key) {
-      case 'caliber':
-        return `Caliber: ${value}`;
-      case 'colors':
-        return `Colors: ${value}`;
-      case 'longAction':
-        return 'Long Action';
-      case 'deluxeVersion':
-        return 'Deluxe Version';
-      case 'grip':
-        return `Grip: ${value}`;
-      case 'stock':
-        return `Stock: ${value}`;
-      case 'handGuard':
-        return `Handguard: ${value}`;
-      case 'color':
-        return `Colors: ${value}`;
-      case 'size':
-        return `Size: ${value}`;
-      default:
-        return '';
-    }
-  };
-
-  const formatCardNumber = (value: string) => {
-    const v = value.replace(/\s+/g, '').replace(/[^0-9]/gi, '');
-    const matches = v.match(/\d{4,16}/g);
-    const match = (matches && matches[0]) || '';
-    const parts = [];
-
-    for (let i = 0, len = match.length; i < len; i += 4) {
-      parts.push(match.substring(i, i + 4));
-    }
-
-    if (parts.length) {
-      return parts.join(' ');
-    } else {
-      return value;
-    }
-  };
-
-  const formatExpiryDate = (value: string) => {
-    const v = value.replace(/\s+/g, '').replace(/[^0-9]/gi, '');
-    if (v.length >= 2) {
-      return `${v.slice(0, 2)}/${v.slice(2, 4)}`;
-    }
-    return v;
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Generate order ID
+    // Generate new order ID
     const newOrderId = crypto.randomUUID();
     setOrderId(newOrderId);
     setShowProcessingModal(true);
@@ -149,8 +100,8 @@ const CheckoutPage: React.FC = () => {
         expiryYear: formData.expiryYear,
         cvv: formData.cvv,
         amount: total,
-        address: formData.address,
-        zip: formData.zipCode,
+        address: billingInfo.sameAsShipping ? formData.address : billingInfo.address,
+        zip: billingInfo.sameAsShipping ? formData.zipCode : billingInfo.zipCode,
         orderId: newOrderId
       });
 
@@ -161,11 +112,7 @@ const CheckoutPage: React.FC = () => {
     } catch (error: any) {
       console.error('Payment error:', error);
       setPaymentStatus('failed');
-      setTimeout(() => {
-        navigate('/payment/error', {
-          state: { message: error.message }
-        });
-      }, 2000);
+      setError(error.message);
     }
   };
 
@@ -191,6 +138,7 @@ const CheckoutPage: React.FC = () => {
         isOpen={showProcessingModal}
         orderId={orderId || ''}
         status={paymentStatus}
+        message={error}
       />
 
       <div className="container mx-auto px-4">
@@ -361,7 +309,7 @@ const CheckoutPage: React.FC = () => {
                         <label className="flex items-center space-x-2 cursor-pointer">
                           <input
                             type="checkbox"
-                            checked={billingInfo.sameAsShipping || false}
+                            checked={billingInfo.sameAsShipping}
                             onChange={(e) => {
                               const isChecked = e.target.checked;
                               setBillingInfo(prev => ({
@@ -374,12 +322,6 @@ const CheckoutPage: React.FC = () => {
                                   zipCode: formData.zipCode
                                 } : {})
                               }));
-                              if (isChecked) {
-                                setFormData(prev => ({
-                                  ...prev,
-                                  nameOnCard: `${prev.firstName} ${prev.lastName}`
-                                }));
-                              }
                             }}
                             className="form-checkbox text-tan rounded-sm"
                           />
@@ -468,7 +410,7 @@ const CheckoutPage: React.FC = () => {
                           value={formData.cardNumber}
                           onChange={(e) => setFormData(prev => ({
                             ...prev,
-                            cardNumber: formatCardNumber(e.target.value)
+                            cardNumber: e.target.value.replace(/\D/g, '').replace(/(\d{4})/g, '$1 ').trim()
                           }))}
                           className="w-full bg-dark-gray border border-gunmetal-light rounded-sm px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-tan focus:border-transparent"
                         />
@@ -479,18 +421,32 @@ const CheckoutPage: React.FC = () => {
                           <label className="block text-sm font-medium text-gray-300 mb-1">
                             Expiry Date <span className="text-tan">*</span>
                           </label>
-                          <input
-                            type="text"
-                            required
-                            maxLength={5}
-                            placeholder="MM/YY"
-                            value={formData.expiryDate}
-                            onChange={(e) => setFormData(prev => ({
-                              ...prev,
-                              expiryDate: formatExpiryDate(e.target.value)
-                            }))}
-                            className="w-full bg-dark-gray border border-gunmetal-light rounded-sm px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-tan focus:border-transparent"
-                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <input
+                              type="text"
+                              required
+                              maxLength={2}
+                              placeholder="MM"
+                              value={formData.expiryMonth}
+                              onChange={(e) => setFormData(prev => ({
+                                ...prev,
+                                expiryMonth: e.target.value.replace(/\D/g, '')
+                              }))}
+                              className="w-full bg-dark-gray border border-gunmetal-light rounded-sm px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-tan focus:border-transparent"
+                            />
+                            <input
+                              type="text"
+                              required
+                              maxLength={2}
+                              placeholder="YY"
+                              value={formData.expiryYear}
+                              onChange={(e) => setFormData(prev => ({
+                                ...prev,
+                                expiryYear: e.target.value.replace(/\D/g, '')
+                              }))}
+                              className="w-full bg-dark-gray border border-gunmetal-light rounded-sm px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-tan focus:border-transparent"
+                            />
+                          </div>
                         </div>
 
                         <div>
@@ -549,14 +505,7 @@ const CheckoutPage: React.FC = () => {
                           className="w-16 h-16 object-cover rounded-sm"
                         />
                         <div className="ml-4 flex-1">
-                          <h3 className="font-medium">{item.name.split(' - ')[0]}</h3>
-                          {item.options && Object.entries(item.options).map(([key, value]) => (
-                            value && (
-                              <p key={key} className="text-sm text-gray-400">
-                                {formatOptionLabel(key, value)}
-                              </p>
-                            )
-                          ))}
+                          <h3 className="font-medium">{item.name}</h3>
                           <p className="text-gray-400">Qty: {item.quantity}</p>
                         </div>
                         <p className="text-tan">${(item.price * item.quantity).toFixed(2)}</p>
@@ -577,17 +526,6 @@ const CheckoutPage: React.FC = () => {
                   <div className="flex justify-between font-bold text-lg pt-2 border-t border-gunmetal-light">
                     <span>Total</span>
                     <span className="text-tan">${total.toFixed(2)}</span>
-                  </div>
-                </div>
-
-                <div className="mt-6 space-y-4 text-sm text-gray-400">
-                  <div className="flex items-center">
-                    <Shield size={16} className="mr-2 text-tan" />
-                    <span>Secure checkout</span>
-                  </div>
-                  <div className="flex items-center">
-                    <Truck size={16} className="mr-2 text-tan" />
-                    <span>Free shipping on all orders</span>
                   </div>
                 </div>
               </div>

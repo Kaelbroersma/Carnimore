@@ -53,6 +53,7 @@ const PaymentProcessingModal: React.FC<PaymentProcessingModalProps> = ({
                   <div className="space-y-2">
                     <p className="text-gray-400">{message || 'Your payment has been processed successfully.'}</p>
                     <p className="text-sm text-gray-400">Order ID: {orderId}</p>
+                    <p className="text-sm text-gray-400">Redirecting to confirmation page...</p>
                   </div>
                 </>
               )}
@@ -64,6 +65,7 @@ const PaymentProcessingModal: React.FC<PaymentProcessingModalProps> = ({
                   <div className="space-y-2">
                     <p className="text-gray-400">{message || 'There was an error processing your payment. Please try again.'}</p>
                     <p className="text-sm text-gray-400">Order ID: {orderId}</p>
+                    <p className="text-sm text-gray-400">Redirecting...</p>
                   </div>
                 </>
               )}

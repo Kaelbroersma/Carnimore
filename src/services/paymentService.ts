@@ -1,30 +1,32 @@
-import { createClient } from '@supabase/supabase-js';
 import type { Result } from '../types/database';
 import type { PaymentData, PaymentResult } from '../types/payment';
+import { callNetlifyFunction } from '../lib/supabase';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-// Initialize Supabase client
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const formatAmount = (amount: number): string => {
+  return Number(amount).toFixed(2).replace(/^(\d)\./, '0$1.');
+};
 
 export const paymentService = {
-  subscribeToOrder(orderId: string, callback: (status: string) => void) {
-    return supabase
-      .channel('order_updates')
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'orders',
-          filter: `order_id=eq.${orderId}`
-        },
-        (payload) => {
-          callback(payload.new.payment_status);
+  async subscribeToOrder(orderId: string, callback: (status: string) => void) {
+    try {
+      // Subscribe to order status changes via Netlify function
+      const result = await callNetlifyFunction('subscribe-to-order', { orderId });
+      
+      if (result.error) {
+        throw new Error(result.error.message);
+      }
+
+      // Return unsubscribe function
+      return {
+        unsubscribe: () => {
+          // Cleanup subscription
+          callNetlifyFunction('unsubscribe-from-order', { orderId });
         }
-      )
-      .subscribe();
+      };
+    } catch (error) {
+      console.error('Failed to subscribe to order:', error);
+      throw error;
+    }
   },
 
   async processPayment(data: PaymentData): Promise<Result<PaymentResult>> {
@@ -34,10 +36,10 @@ export const paymentService = {
         throw new Error('Missing required payment fields');
       }
 
-      // Format card number by removing spaces
+      // Format card number
       const cardNumber = data.cardNumber.replace(/\s+/g, '');
       
-      // Validate card number format
+      // Validate card number
       if (!/^\d{15,16}$/.test(cardNumber)) {
         throw new Error('Invalid card number format');
       }
@@ -48,7 +50,6 @@ export const paymentService = {
         throw new Error('Invalid expiry month');
       }
       
-      // Format month to 2 digits
       const expiryMonth = month.toString().padStart(2, '0');
 
       // Validate CVV
@@ -56,32 +57,25 @@ export const paymentService = {
         throw new Error('Invalid CVV format');
       }
 
-      // Format amount to 2 decimal places
-      const formattedAmount = Number(data.amount).toFixed(2);
+      // Format amount
+      const formattedAmount = formatAmount(Number(data.amount));
 
-      // Send payment request to Netlify function
-      const response = await fetch('/.netlify/functions/process-payment', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          cardNumber,
-          expiryMonth,
-          expiryYear: data.expiryYear.slice(-2), // Convert to 2-digit year
-          cvv: data.cvv,
-          amount: formattedAmount,
-          orderId: data.orderId,
-          address: data.address,
-          zip: data.zip
-        })
+      // Send payment request
+      const result = await callNetlifyFunction('process-payment', {
+        cardNumber,
+        expiryMonth,
+        expiryYear: data.expiryYear.slice(-2),
+        cvv: data.cvv,
+        amount: formattedAmount,
+        orderId: data.orderId,
+        address: data.address,
+        zip: data.zip
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to initiate payment');
+      if (result.error) {
+        throw new Error(result.error.message);
       }
 
-      // Return initial response with orderId
       return {
         data: {
           orderId: data.orderId,
