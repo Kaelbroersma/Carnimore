@@ -1,6 +1,5 @@
 import { Handler } from '@netlify/functions';
 import { createClient } from '@supabase/supabase-js';
-import { sanitizePaymentData } from '../../src/utils/sanitize';
 
 // Environment variables
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -39,8 +38,11 @@ export const handler: Handler = async (event) => {
     console.log('Payment postback received:', {
       timestamp: new Date().toISOString(),
       requestId: event.requestContext?.requestId || 'no-request-id',
-      // Only log non-sensitive metadata
-      method: event.httpMethod
+      method: event.httpMethod,
+      headers: JSON.stringify(event.headers),
+      rawBody: event.body,
+      isBase64Encoded: event.isBase64Encoded || false,
+      contentType: event.headers['content-type'] || event.headers['Content-Type']
     });
 
     // Parse postback data
@@ -54,8 +56,7 @@ export const handler: Handler = async (event) => {
       data = JSON.parse(event.body);
       console.log('Successfully parsed JSON response:', {
         timestamp: new Date().toISOString(),
-        // Log sanitized version of response
-        parsedData: JSON.stringify(sanitizePaymentData(data))
+        parsedData: JSON.stringify(data)
       });
     } catch (e) {
       // If JSON parse fails, try parsing as extended postback format
@@ -81,14 +82,15 @@ export const handler: Handler = async (event) => {
         ) as EPNResponse;
         console.log('Successfully parsed extended format:', {
           timestamp: new Date().toISOString(),
-          parsedData: JSON.stringify(sanitizePaymentData(data))
+          parsedData: JSON.stringify(data)
         });
       } catch (e) {
         console.error('Failed to parse postback data:', {
           timestamp: new Date().toISOString(),
           requestId: event.requestContext?.requestId || 'no-request-id',
+          rawBody: event.body,
           error: e instanceof Error ? e.message : 'Unknown error',
-          name: e instanceof Error ? e.name : 'Unknown'
+          errorStack: e instanceof Error ? e.stack : undefined
         });
         throw new Error('Invalid postback data format');
       }
@@ -126,6 +128,7 @@ export const handler: Handler = async (event) => {
       console.error('Missing required fields in postback:', {
         timestamp: new Date().toISOString(),
         requestId: event.requestContext?.requestId || 'no-request-id',
+        receivedData: JSON.stringify(data),
         hasTransactionId: !!transactionId,
         hasOrderId: !!orderId
       });
@@ -135,12 +138,15 @@ export const handler: Handler = async (event) => {
     // Log extracted details
     console.log('Extracted postback details:', {
       timestamp: new Date().toISOString(),
-      // Only log non-sensitive transaction details
       requestId: event.requestContext?.requestId || 'no-request-id',
       transactionId,
       orderId,
       success,
-      status: success ? 'paid' : 'failed'
+      respText,
+      authCode,
+      avsResponse: avsResp,
+      cvv2Response: cvv2Resp,
+      fullResponse: JSON.stringify(data)
     });
 
     // Update order status in Supabase
@@ -206,10 +212,9 @@ export const handler: Handler = async (event) => {
     console.error('Payment postback error:', {
       timestamp: new Date().toISOString(),
       requestId: event.requestContext?.requestId,
-      error: {
-        name: error.name,
-        message: error.message
-      }
+      name: error.name,
+      message: error.message,
+      stack: error.stack
     });
 
     return {

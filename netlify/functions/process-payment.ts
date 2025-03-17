@@ -1,7 +1,6 @@
 import { Handler } from '@netlify/functions';
 import https from 'https';
 import { createClient } from '@supabase/supabase-js';
-import { sanitizePaymentData } from '../../src/utils/sanitize';
 
 // Environment variables
 const EPN_ACCOUNT = process.env.EPN_ACCOUNT_NUMBER;
@@ -46,14 +45,8 @@ export const handler: Handler = async (event) => {
     console.log('Payment data received:', {
       timestamp: new Date().toISOString(),
       orderId,
-      // Log sanitized version of the payment data
-      sanitizedData: sanitizePaymentData({
-        orderId,
-        amount: parseFloat(amount).toFixed(2),
-        cardNumber,
-        cvv,
-        itemCount: items?.length
-      })
+      amount,
+      itemCount: items?.length
     });
 
     // Get user ID from auth context if available
@@ -156,15 +149,16 @@ export const handler: Handler = async (event) => {
       TranType: 'Sale',
       IndustryType: 'E',
       Total: amount,
+      // Use billing address if provided, otherwise use shipping address
       Address: (billingAddress?.address || shippingAddress.address || '').trim(),
       City: (billingAddress?.city || shippingAddress.city || '').trim(),
       State: (billingAddress?.state || shippingAddress.state || '').trim(),
       Zip: (billingAddress?.zipCode || shippingAddress.zipCode || '').trim(),
-      CardNo: cardNumber.replace(/\s+/g, ''), // Send raw card number to processor
+      CardNo: cardNumber.replace(/\s+/g, ''),
       ExpMonth: expiryMonth.padStart(2, '0'),
       ExpYear: expiryYear.slice(-2),
       CVV2Type: '1',
-      CVV2: cvv, // Send raw CVV to processor
+      CVV2: cvv,
       OrderID: orderId,
       Description: `Order ${orderId}`,
       PostbackID: orderId,
@@ -179,9 +173,8 @@ export const handler: Handler = async (event) => {
 
     console.log('Sending payment request to processor:', {
       timestamp: new Date().toISOString(),
-      // Only log non-sensitive data
       orderId,
-      amount: parseFloat(amount).toFixed(2)
+      amount
     });
 
     // Create HTTPS request with proper TLS settings
@@ -225,7 +218,8 @@ export const handler: Handler = async (event) => {
     console.error('Payment processing error:', {
       timestamp: new Date().toISOString(),
       name: error.name,
-      message: error.message
+      message: error.message,
+      stack: error.stack
     });
 
     return {

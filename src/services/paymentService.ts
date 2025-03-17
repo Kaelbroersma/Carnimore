@@ -2,7 +2,6 @@ import type { Result } from '../types/database';
 import type { PaymentData, PaymentResult } from '../types/payment';
 import { callNetlifyFunction } from '../lib/supabase';
 import { useAuthStore } from '../store/authStore';
-import { sanitizePaymentData } from '../utils/sanitize';
 
 export const paymentService = {
   async processPayment(data: PaymentData): Promise<Result<PaymentResult>> {
@@ -88,12 +87,8 @@ export const paymentService = {
       // Log any initial errors but don't throw yet
       if (!response.ok || result.error) {
         console.warn('Initial payment response indicates potential issue:', {
-          // Only log sanitized data
-          timestamp: new Date().toISOString(),
           ok: response.ok,
-          error: result.error,
-          orderId: data.orderId,
-          sanitizedData: sanitizePaymentData(paymentRequest)
+          error: result.error
         });
       }
 
@@ -133,19 +128,12 @@ export const paymentService = {
       }
 
     } catch (error: any) {
-      // Sanitize error details before logging
-      console.error('Payment error:', {
-        timestamp: new Date().toISOString(),
-        // Only include non-sensitive data in error logs
-        orderId: data.orderId,
-        message: error.message,
-        name: error.name
-      });
+      console.error('Payment error:', error);
       return {
         data: null,
         error: {
           message: error.message || 'Failed to process payment',
-          details: 'An error occurred while processing payment'
+          details: error.stack
         }
       };
     } finally {
